@@ -1,0 +1,33 @@
+{
+  "name": "go-service",
+  "description": "Padrão de engenharia para projetos Go (APIs, CLIs, Daemons e microsserviços)",
+  "language": "go",
+  "rules": {
+    "errorHandling": {
+      "neverIgnoreErrors": true,
+      "wrapErrorsWithFormat": true,
+      "prohibitPanicInBusinessLogic": true
+    },
+    "context": {
+      "requireContextAsFirstParam": true,
+      "gracefulShutdown": true
+    },
+    "concurrency": {
+      "requireWaitGroupOrChannels": true,
+      "safeGoroutines": true
+    },
+    "logging": {
+      "prohibitRawPrintln": true,
+      "structuredLogging": true,
+      "preferred": "logrus-or-slog"
+    },
+    "naming": {
+      "exportedPascalCase": true,
+      "unexportedCamelCase": true
+    },
+    "security": {
+      "blockHardcodedSecrets": true
+    }
+  },
+  "docsSync": ["AGENTS.md", "CLAUDE.md", ".github/copilot-instructions.md", ".cursorrules"]
+}

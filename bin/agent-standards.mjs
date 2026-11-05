@@ -56,12 +56,17 @@ const main = async () => {
     console.log(`🔍 [agent-standards] Analisando repositório em: ${cwd}...`);
     const { findings, generatedConfig } = discoverRepoStandards(cwd);
     console.log(`\n📊 Perfil Técnico Identificado:`);
-    console.log(`   • Framework:   ${findings.framework}`);
-    console.log(`   • UI Library:  ${findings.ui}`);
-    console.log(`   • Test Runner: ${findings.test}`);
-    console.log(`   • É Scraper?:  ${findings.isScraper ? 'Sim' : 'Não'}`);
-    console.log(`   • Estilo Fn:   ${findings.predominantFunctionStyle === 'arrow' ? 'Arrow Functions (Predominante)' : 'Funções Tradicionais'}`);
-    console.log(`   • Tipagem:     ${findings.strictTypes ? 'Estrita (Strict)' : 'Flexível'}`);
+    console.log(`   • Linguagem:    ${findings.language.toUpperCase()}`);
+    console.log(`   • Build Tool:   ${findings.buildTool}`);
+    console.log(`   • Framework:    ${findings.framework}`);
+    console.log(`   • Arquitetura:  ${findings.architecture}`);
+    console.log(`   • Test Runner:  ${findings.test}`);
+    if (findings.details && Object.keys(findings.details).length > 0) {
+      console.log(`   • Características Idiomáticas Detectadas:`);
+      for (const [k, v] of Object.entries(findings.details)) {
+        console.log(`     - ${k}: ${v}`);
+      }
+    }
     console.log(`\n💡 Preset Recomendado: "${generatedConfig.preset}"`);
     return;
   }

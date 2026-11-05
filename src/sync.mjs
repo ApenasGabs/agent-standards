@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 
 /**
  * Compila a configuração de padrões em artefatos para múltiplos agentes
+ * Suporta TypeScript, Java e Go.
  */
 export const syncAgentDocs = (targetDir, customConfig = null) => {
   let config = customConfig;
@@ -17,12 +18,10 @@ export const syncAgentDocs = (targetDir, customConfig = null) => {
   }
 
   if (!config) {
-    // Carregar preset mínimo
     config = {
       preset: 'minimal',
+      language: 'unknown',
       rules: {
-        functions: 'arrow-only',
-        typescript: { noExplicitAny: true },
         security: { blockHardcodedSecrets: true },
         cleanCode: { blockConsoleLog: true, blockEmptyCatch: true },
       },
@@ -32,12 +31,63 @@ export const syncAgentDocs = (targetDir, customConfig = null) => {
 
   const generatedFiles = [];
   const rules = config.rules || {};
+  const lang = config.language || 'typescript/javascript';
 
-  // Gerar conteúdo comum
   const buildMarkdownRules = (agentName) => {
     let md = `# Diretrizes de Engenharia e Padrões de Código (${agentName})\n\n`;
-    md += `> Gerado automaticamente por \`@apenasgabs/agent-standards\` a partir de \`agent.config.json\`.\n\n`;
+    md += `> Gerado automaticamente por \`@apenasgabs/agent-standards\` a partir de \`agent.config.json\`.\n`;
+    md += `> Preset Ativo: **${config.preset || 'custom'}** | Linguagem: **${lang.toUpperCase()}**\n\n`;
 
+    // ==========================================
+    // REGRAS PARA JAVA (SPRING BOOT)
+    // ==========================================
+    if (lang === 'java' || config.preset === 'java-spring') {
+      md += `## 1. Arquitetura em Camadas (Spring Boot)\n`;
+      md += `- ✅ **Camadas Rígidas**: Seguir o fluxo \`Controller\` ➔ \`Service\` ➔ \`Repository\` ➔ \`Model/Entity\`.\n`;
+      md += `- ✅ **Controllers Enxutos**: Controllers não contêm regra de negócio nem queries; apenas recebem DTOs e retornam \`ResponseEntity\`.\n`;
+      md += `- ✅ **Injeção de Dependências**: Preferir injeção via construtor (ou Lombok \`@RequiredArgsConstructor\`) em vez de \`@Autowired\` direto em campos privados.\n\n`;
+
+      md += `## 2. Validação & DTOs (Java 17+)\n`;
+      md += `- ✅ Utilizar **Java Records** (\`public record CreateUserDTO(...)\`) para DTOs imutáveis de entrada/saída.\n`;
+      md += `- ✅ **Bean Validation Obrigatório**: Anotar campos de DTO com \`@NotNull\`, \`@NotBlank\`, \`@Size\`, etc., e usar \`@Valid\` nos controllers.\n\n`;
+
+      md += `## 3. Logs, Exceções e Higiene\n`;
+      md += `- ❌ **PROIBIDO** o uso de \`System.out.println\` ou \`e.printStackTrace()\` em código de produção.\n`;
+      md += `- ✅ Utilizar logging estruturado via SLF4J / Logback (\`@Slf4j\` ou \`LoggerFactory.getLogger\`).\n`;
+      md += `- ✅ Retornos opcionais de repositório devem usar \`java.util.Optional.map(...).orElseThrow(...)\`.\n\n`;
+
+      md += `## 4. Testes Automatizados\n`;
+      md += `- ✅ Testes unitários e de integração com **JUnit 5** (\`@Test\`, \`@SpringBootTest\`, Mockito).\n`;
+      return md;
+    }
+
+    // ==========================================
+    // REGRAS PARA GO
+    // ==========================================
+    if (lang === 'go' || config.preset === 'go-service') {
+      md += `## 1. Tratamento Idiomático de Erros (Go Rules)\n`;
+      md += `- ❌ **NUNCA** ignore erros retornados (evitar \`_ = fn()\`).\n`;
+      md += `- ✅ Sempre verificar \`if err != nil\` imediatamente após a chamada.\n`;
+      md += `- ✅ Envelopar erros com contexto usando \`fmt.Errorf("falha ao executar X: %w", err)\` para permitir \`errors.Is\` e \`errors.As\`.\n`;
+      md += `- ❌ **PROIBIDO** o uso de \`panic()\` em lógica de negócio ou APIs.\n\n`;
+
+      md += `## 2. Contexto e Ciclo de Vida\n`;
+      md += `- ✅ Toda função de rede, banco, I/O ou goroutine longa DEVE aceitar \`ctx context.Context\` como primeiro parâmetro.\n`;
+      md += `- ✅ Respeitar cancelamento de contexto e suportar graceful shutdown com \`signal.NotifyContext\`.\n\n`;
+
+      md += `## 3. Concorrência Segura\n`;
+      md += `- ✅ Goroutines disparadas devem ser coordenadas com \`sync.WaitGroup\` ou canais.\n`;
+      md += `- ✅ Evitar vazamento de goroutines (*goroutine leak*); sempre garantir canal de saída ou cancelamento.\n\n`;
+
+      md += `## 4. Logging & Padrões de Nomenclatura\n`;
+      md += `- ❌ Proibido \`fmt.Println()\` como log de produção. Utilizar logger estruturado (\`logrus\` ou \`slog\`).\n`;
+      md += `- ✅ Identificadores exportados em PascalCase; identificadores internos do pacote em camelCase.\n`;
+      return md;
+    }
+
+    // ==========================================
+    // REGRAS PARA TYPESCRIPT / JAVASCRIPT
+    // ==========================================
     md += `## 1. Padrões de Funções e Sintaxe\n`;
     if (rules.functions === 'arrow-only') {
       md += `- ❌ **NUNCA** usar \`function\` tradicional em arquivos de lógica/componentes.\n`;
@@ -65,17 +115,6 @@ export const syncAgentDocs = (targetDir, customConfig = null) => {
       md += `\n`;
     }
 
-    if (rules.scraping) {
-      md += `## 3. Padrões de Web Scraping (SimpleCrawl)\n`;
-      if (rules.scraping.strategy === 'http-first-browser-fallback') {
-        md += `- ✅ Estratégia de extração: **HTTP-first, browser-fallback** (Cheerio para SSR; Playwright apenas para CSR/anti-bot).\n`;
-      }
-      if (rules.scraping.modularBaseScraper) {
-        md += `- ✅ Padrão modular: Separar seletores (\`selectors.ts\`), mapeadores (\`mapper.ts\`) e contratos de dados (\`types.ts\`).\n`;
-      }
-      md += `\n`;
-    }
-
     md += `## 4. Segurança e Higiene de Código\n`;
     if (rules.security?.blockInnerHTML) {
       md += `- ❌ **XSS Proibido**: Nunca utilizar \`innerHTML\` sem sanitização.\n`;
@@ -85,9 +124,6 @@ export const syncAgentDocs = (targetDir, customConfig = null) => {
     }
     if (rules.cleanCode?.blockConsoleLog) {
       md += `- ❌ Remover \`console.log\` e chamadas de depuração residuais antes de finalizar.\n`;
-    }
-    if (rules.cleanCode?.blockEmptyCatch) {
-      md += `- ❌ Proibido blocos \`catch\` vazios sem tratamento ou logging estruturado.\n`;
     }
     md += `\n`;
 
