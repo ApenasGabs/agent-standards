@@ -1,0 +1,43 @@
+{
+  "name": "@apenasgabs/agent-standards",
+  "version": "0.1.0",
+  "description": "Universal Agent Standards Engine — Discover, generate, and enforce custom coding & architecture standards across Antigravity (AGY), Claude Code, Cursor, and GitHub Actions.",
+  "type": "module",
+  "main": "src/index.mjs",
+  "bin": {
+    "agent-standards": "bin/agent-standards.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node bin/agent-standards.mjs",
+    "test": "node --test",
+    "smoke": "node bin/agent-standards.mjs --help"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ApenasGabs/agent-standards.git"
+  },
+  "keywords": [
+    "agents",
+    "antigravity",
+    "agy",
+    "claude-code",
+    "cursor",
+    "copilot",
+    "code-review",
+    "standards",
+    "governance",
+    "spec-review"
+  ],
+  "author": "Apenasgabs",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}

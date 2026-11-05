@@ -1,0 +1,25 @@
+{
+  "name": "frontend-react",
+  "description": "Padrão moderno para aplicações React / Next.js com TypeScript e componentes acessíveis",
+  "rules": {
+    "functions": "arrow-only",
+    "typescript": {
+      "noExplicitAny": true,
+      "preferInterfaces": true,
+      "strictParams": true
+    },
+    "ui": {
+      "preferred": "daisyui",
+      "requireDataTestId": true
+    },
+    "security": {
+      "blockInnerHTML": true,
+      "blockHardcodedSecrets": true
+    },
+    "cleanCode": {
+      "blockConsoleLog": true,
+      "blockEmptyCatch": true
+    }
+  },
+  "docsSync": ["AGENTS.md", "CLAUDE.md", ".github/copilot-instructions.md", ".cursorrules"]
+}

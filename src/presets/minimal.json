@@ -1,0 +1,17 @@
+{
+  "name": "minimal",
+  "description": "Padrão universal e agnóstico de boas práticas de engenharia e higiene de código",
+  "rules": {
+    "typescript": {
+      "noExplicitAny": true
+    },
+    "security": {
+      "blockHardcodedSecrets": true
+    },
+    "cleanCode": {
+      "blockConsoleLog": true,
+      "blockEmptyCatch": true
+    }
+  },
+  "docsSync": ["AGENTS.md", "CLAUDE.md"]
+}

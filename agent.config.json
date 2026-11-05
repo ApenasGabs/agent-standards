@@ -1,0 +1,38 @@
+{
+  "$schema": "https://raw.githubusercontent.com/ApenasGabs/agent-standards/main/schema.json",
+  "preset": "minimal",
+  "discovered": {
+    "framework": "unknown",
+    "ui": "none",
+    "test": "none",
+    "type": "minimal",
+    "isScraper": false,
+    "predominantFunctionStyle": "arrow",
+    "strictTypes": false
+  },
+  "rules": {
+    "functions": "arrow-only",
+    "typescript": {
+      "noExplicitAny": false,
+      "preferInterfaces": true
+    },
+    "ui": {
+      "preferred": "none",
+      "requireDataTestId": false
+    },
+    "security": {
+      "blockInnerHTML": false,
+      "blockHardcodedSecrets": true
+    },
+    "cleanCode": {
+      "blockConsoleLog": true,
+      "blockEmptyCatch": true
+    }
+  },
+  "docsSync": [
+    "AGENTS.md",
+    "CLAUDE.md",
+    ".github/copilot-instructions.md",
+    ".cursorrules"
+  ]
+}

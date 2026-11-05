@@ -1,0 +1,9 @@
+node_modules/
+.npm/
+dist/
+*.log
+.DS_Store
+review-fixes.patch
+REVIEW_REPORT.md
+.env
+.env.local

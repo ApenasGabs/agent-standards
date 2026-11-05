@@ -1,0 +1,23 @@
+{
+  "name": "scraping-crawler",
+  "description": "Padrão canônico SimpleCrawl para web scraping e pipelines de dados (Playwright + Cheerio)",
+  "rules": {
+    "functions": "arrow-only",
+    "typescript": {
+      "noExplicitAny": true
+    },
+    "scraping": {
+      "strategy": "http-first-browser-fallback",
+      "preferCheerioForSSR": true,
+      "modularBaseScraper": true,
+      "separateSelectorsAndMappers": true
+    },
+    "security": {
+      "blockHardcodedSecrets": true
+    },
+    "cleanCode": {
+      "blockConsoleLog": true
+    }
+  },
+  "docsSync": ["AGENTS.md", "CLAUDE.md", ".github/copilot-instructions.md", "ARQUITECTURAS_SCRAPING.md"]
+}
