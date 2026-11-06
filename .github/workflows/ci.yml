@@ -18,3 +18,5 @@ jobs:
         run: node bin/agent-standards.mjs --help
       - name: Test Auto-Discovery
         run: node bin/agent-standards.mjs discover
+      - name: Run Unit Tests
+        run: npm test

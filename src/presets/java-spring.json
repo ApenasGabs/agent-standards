@@ -1,0 +1,35 @@
+{
+  "name": "java-spring",
+  "description": "Padrão de engenharia para projetos Java (Spring Boot, JPA, REST APIs e JUnit 5)",
+  "language": "java",
+  "rules": {
+    "architecture": {
+      "pattern": "layered",
+      "layers": ["controller", "service", "repository", "model"],
+      "thinControllers": true,
+      "useResponseEntity": true
+    },
+    "spring": {
+      "useBeanValidation": true,
+      "dependencyInjection": "constructor-preferred",
+      "prohibitFieldInjection": false
+    },
+    "java": {
+      "version": 17,
+      "useRecordsForDTOs": true,
+      "useOptionalForNullableReturns": true
+    },
+    "logging": {
+      "prohibitSystemOut": true,
+      "preferred": "slf4j-or-logback"
+    },
+    "testing": {
+      "framework": "junit-5",
+      "useSpringBootTest": true
+    },
+    "security": {
+      "blockHardcodedSecrets": true
+    }
+  },
+  "docsSync": ["AGENTS.md", "CLAUDE.md", ".github/copilot-instructions.md", ".cursorrules"]
+}
