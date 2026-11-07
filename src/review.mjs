@@ -11,6 +11,34 @@ const runCmd = (cmd, cwd = process.cwd()) => {
   }
 };
 
+/**
+ * Avalia deterministicamente o array de statusCheckRollup do GitHub Actions / CI
+ */
+export const evaluateCIPipeline = (statusCheckRollup = []) => {
+  if (!statusCheckRollup || statusCheckRollup.length === 0) {
+    return { configured: false, status: 'NO_CHECKS', total: 0, successful: 0, failed: [], inProgress: [] };
+  }
+
+  const failed = statusCheckRollup.filter(
+    (c) => c.conclusion === 'FAILURE' || c.conclusion === 'TIMED_OUT' || c.conclusion === 'ACTION_REQUIRED'
+  );
+  const successful = statusCheckRollup.filter((c) => c.conclusion === 'SUCCESS');
+  const inProgress = statusCheckRollup.filter((c) => c.status === 'IN_PROGRESS' || c.status === 'QUEUED');
+
+  let status = 'SUCCESS';
+  if (failed.length > 0) status = 'FAILURE';
+  else if (inProgress.length > 0) status = 'IN_PROGRESS';
+
+  return {
+    configured: true,
+    status,
+    total: statusCheckRollup.length,
+    successful: successful.length,
+    failed,
+    inProgress,
+  };
+};
+
 export const runCodeReview = async (userOptions = {}) => {
   const options = {
     target: process.cwd(),
@@ -207,13 +235,58 @@ export const runCodeReview = async (userOptions = {}) => {
     }
   }
 
-  // 4. Gerar Relatório
+  // 4. Inspecionar Pipeline de CI/CD (GitHub Actions / checks remotos)
+  let pipelineInfo = null;
+  const prJson = runCmd('gh pr view --json number,statusCheckRollup,url', targetDir);
+  if (prJson) {
+    try {
+      const parsedPr = JSON.parse(prJson);
+      const evalResult = evaluateCIPipeline(parsedPr.statusCheckRollup);
+      if (evalResult.configured) {
+        pipelineInfo = {
+          ...evalResult,
+          prNumber: parsedPr.number,
+          prUrl: parsedPr.url,
+        };
+
+        if (evalResult.status === 'FAILURE') {
+          for (const f of evalResult.failed) {
+            divergences.push({
+              axis: 'Pipeline',
+              file: f.workflowName || 'CI',
+              line: 1,
+              ruleId: 'ci-pipeline-failed',
+              docRef: 'GitHub Actions / CI Gate',
+              description: `A verificação "${f.name}" falhou no GitHub Actions.`,
+              snippet: null,
+              suggestion: `Consulte os logs da falha em: ${f.detailsUrl}`,
+            });
+          }
+        }
+      }
+    } catch {}
+  }
+
+  // 5. Gerar Relatório
   let md = `# 🛡️ Relatório de Code Review — ${appName}\n\n`;
   md += `> **Data**: ${new Date().toLocaleString('pt-BR')}  \n`;
   md += `> **Status**: ${divergences.length === 0 ? '🟢 Aprovado' : '🔴 Requer Ajustes'}  \n`;
   md += `> **Tarefa**: ${taskTitle} (${taskSource})  \n\n`;
 
   md += `## 1. 📊 Métricas da Avaliação\n`;
+  if (pipelineInfo) {
+    const pipeBadge = pipelineInfo.status === 'SUCCESS' ? '🟢 Passing' : pipelineInfo.status === 'FAILURE' ? '🔴 Failing' : '🟡 Executando';
+    md += `- Pipeline CI/CD: \`${pipeBadge}\` (${pipelineInfo.successful}/${pipelineInfo.total} checks passando no PR #${pipelineInfo.prNumber})\n`;
+    if (pipelineInfo.failed && pipelineInfo.failed.length > 0) {
+      md += `\n### ❌ Links para os checks que falharam na pipeline:\n`;
+      for (const f of pipelineInfo.failed) {
+        md += `- 🔴 **${f.name}** (${f.workflowName || 'Workflow'}): [Ver logs no GitHub Actions](${f.detailsUrl})\n`;
+      }
+    }
+    if (pipelineInfo.successful > 0) {
+      md += `\n> ✅ **Jobs Aprovados**: ${pipelineInfo.successful} de ${pipelineInfo.total} checks concluídos com sucesso.\n`;
+    }
+  }
   md += `- Regras ativas aplicadas: \`${activeRules.length}\`\n`;
   md += `- Divergências encontradas: \`${divergences.length}\`\n\n`;
 
