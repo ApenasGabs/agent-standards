@@ -277,6 +277,15 @@ export const runCodeReview = async (userOptions = {}) => {
   if (pipelineInfo) {
     const pipeBadge = pipelineInfo.status === 'SUCCESS' ? '🟢 Passing' : pipelineInfo.status === 'FAILURE' ? '🔴 Failing' : '🟡 Executando';
     md += `- Pipeline CI/CD: \`${pipeBadge}\` (${pipelineInfo.successful}/${pipelineInfo.total} checks passando no PR #${pipelineInfo.prNumber})\n`;
+    if (pipelineInfo.failed && pipelineInfo.failed.length > 0) {
+      md += `\n### ❌ Links para os checks que falharam na pipeline:\n`;
+      for (const f of pipelineInfo.failed) {
+        md += `- 🔴 **${f.name}** (${f.workflowName || 'Workflow'}): [Ver logs no GitHub Actions](${f.detailsUrl})\n`;
+      }
+    }
+    if (pipelineInfo.successful > 0) {
+      md += `\n> ✅ **Jobs Aprovados**: ${pipelineInfo.successful} de ${pipelineInfo.total} checks concluídos com sucesso.\n`;
+    }
   }
   md += `- Regras ativas aplicadas: \`${activeRules.length}\`\n`;
   md += `- Divergências encontradas: \`${divergences.length}\`\n\n`;

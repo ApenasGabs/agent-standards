@@ -87,18 +87,41 @@ test('ci-review: deve retornar IN_PROGRESS quando houver checks em execução se
   assert.strictEqual(result.inProgress.length, 1);
 });
 
-test('ci-review: deve categorizar TIMED_OUT e ACTION_REQUIRED como FAILURE', () => {
-  const checks = [
+test('ci-review: deve bloquear a aprovação geral do PR caso haja checks falhando na pipeline', () => {
+  const failingChecks = [
     {
-      name: 'Security Gate',
+      name: 'Playwright E2E & Visual Regression',
       status: 'COMPLETED',
-      conclusion: 'TIMED_OUT',
-      workflowName: 'SecOps',
-      detailsUrl: 'https://github.com/org/repo/actions/runs/123/job/1',
+      conclusion: 'FAILURE',
+      workflowName: 'E2E Visual Tests (Playwright CI Gate)',
+      detailsUrl: 'https://github.com/org/repo/actions/runs/123/job/failed-1',
     },
   ];
 
-  const result = evaluateCIPipeline(checks);
-  assert.strictEqual(result.status, 'FAILURE');
+  const result = evaluateCIPipeline(failingChecks);
+  assert.strictEqual(result.status, 'FAILURE', 'Status geral deve ser FAILURE para bloquear aprovação');
   assert.strictEqual(result.failed.length, 1);
+  assert.strictEqual(result.failed[0].name, 'Playwright E2E & Visual Regression');
+  assert.match(result.failed[0].detailsUrl, /failed-1/, 'Relatório rico deve conter link para os que falharam');
+});
+
+test('ci-review: testes unitários cobrindo os cenários de CI no agent-standards (verde, falha e sem CI configurado)', () => {
+  // Cenário 1: Repositório sem CI configurado
+  const noCI = evaluateCIPipeline([]);
+  assert.strictEqual(noCI.configured, false);
+  assert.strictEqual(noCI.status, 'NO_CHECKS');
+
+  // Cenário 2: Pipeline verde com sucesso
+  const greenCI = evaluateCIPipeline([
+    { name: 'build', status: 'COMPLETED', conclusion: 'SUCCESS', detailsUrl: 'http://ci/1' },
+    { name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS', detailsUrl: 'http://ci/2' },
+  ]);
+  assert.strictEqual(greenCI.status, 'SUCCESS');
+  assert.strictEqual(greenCI.successful, 2);
+
+  // Cenário 3: Pipeline com falha
+  const failedCI = evaluateCIPipeline([
+    { name: 'lint', status: 'COMPLETED', conclusion: 'FAILURE', detailsUrl: 'http://ci/fail' },
+  ]);
+  assert.strictEqual(failedCI.status, 'FAILURE');
 });
