@@ -6,9 +6,50 @@ import process from 'node:process';
 const runCmd = (cmd, cwd = process.cwd()) => {
   try {
     return execSync(cmd, { cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
-  } catch {
+  } catch (err) {
     return '';
   }
+};
+
+/**
+ * Avalia deterministicamente o array de statusCheckRollup do GitHub Actions / CI
+ */
+export const evaluateCIPipeline = (statusCheckRollup = []) => {
+  if (!statusCheckRollup || statusCheckRollup.length === 0) {
+    return {
+      configured: false,
+      status: 'NO_CHECKS',
+      total: 0,
+      successful: 0,
+      failed: [],
+      timedOut: [],
+      inProgress: [],
+    };
+  }
+
+  const failed = statusCheckRollup.filter(
+    (c) => c.conclusion === 'FAILURE' || c.conclusion === 'ACTION_REQUIRED' || c.conclusion === 'CANCELLED'
+  );
+  const timedOut = statusCheckRollup.filter((c) => c.conclusion === 'TIMED_OUT');
+  const successful = statusCheckRollup.filter((c) => c.conclusion === 'SUCCESS');
+  const inProgress = statusCheckRollup.filter(
+    (c) => c.status === 'IN_PROGRESS' || c.status === 'QUEUED' || c.status === 'PENDING'
+  );
+
+  let status = 'SUCCESS';
+  if (failed.length > 0) status = 'FAILURE';
+  else if (timedOut.length > 0) status = 'TIMED_OUT';
+  else if (inProgress.length > 0) status = 'IN_PROGRESS';
+
+  return {
+    configured: true,
+    status,
+    total: statusCheckRollup.length,
+    successful: successful.length,
+    failed,
+    timedOut,
+    inProgress,
+  };
 };
 
 export const runCodeReview = async (userOptions = {}) => {
@@ -81,8 +122,8 @@ export const runCodeReview = async (userOptions = {}) => {
           severity: 'medium',
         });
       }
-    } catch {
-      // fallback para descoberta de arquivos
+    } catch (err) {
+      // Fallback para descoberta de arquivos quando agent.config.json não puder ser lido
     }
   }
 
@@ -128,8 +169,8 @@ export const runCodeReview = async (userOptions = {}) => {
             requirements.push({ text: itemMatch[1].trim() });
           }
         }
-      } catch {
-        // ignora
+      } catch (err) {
+        // Ignora erro ao parsear JSON ou requisitos da issue
       }
     }
   }
@@ -207,20 +248,107 @@ export const runCodeReview = async (userOptions = {}) => {
     }
   }
 
-  // 4. Gerar Relatório
+  // 4. Inspecionar Pipeline de CI/CD (GitHub Actions / checks remotos)
+  let pipelineInfo = null;
+  const prJson = runCmd('gh pr view --json number,statusCheckRollup,url', targetDir);
+  if (prJson) {
+    try {
+      const parsedPr = JSON.parse(prJson);
+      const evalResult = evaluateCIPipeline(parsedPr.statusCheckRollup);
+      if (evalResult.configured) {
+        pipelineInfo = {
+          ...evalResult,
+          prNumber: parsedPr.number,
+          prUrl: parsedPr.url,
+        };
+
+        if (evalResult.status === 'FAILURE' || evalResult.status === 'TIMED_OUT') {
+          const blockingChecks = [...(evalResult.failed || []), ...(evalResult.timedOut || [])];
+          for (const f of blockingChecks) {
+            const isTimeout = f.conclusion === 'TIMED_OUT';
+            divergences.push({
+              axis: 'Pipeline',
+              file: f.workflowName || 'CI',
+              line: 1,
+              ruleId: isTimeout ? 'ci-pipeline-timeout' : 'ci-pipeline-failed',
+              docRef: 'GitHub Actions / CI Gate',
+              description: isTimeout
+                ? `A verificação "${f.name}" excedeu o tempo limite (TIMED_OUT) no GitHub Actions.`
+                : `A verificação "${f.name}" falhou no GitHub Actions.`,
+              snippet: null,
+              suggestion: `Consulte os logs da falha em: ${f.detailsUrl}`,
+            });
+          }
+        }
+      }
+    } catch (err) {
+      // Ignora erro de consulta ou parse do PR para manter resiliência
+    }
+  }
+
+  // 5. Gerar Relatório
+  let pipeBadge = '⚪ Não configurado';
+  let pipeDetails = 'Nenhum check remoto registrado';
+
+  if (pipelineInfo && pipelineInfo.configured) {
+    if (pipelineInfo.status === 'SUCCESS') {
+      pipeBadge = '🟢 Passing';
+      pipeDetails = `${pipelineInfo.successful}/${pipelineInfo.total} checks passando no PR #${pipelineInfo.prNumber}`;
+    } else if (pipelineInfo.status === 'FAILURE') {
+      pipeBadge = '🔴 Failing';
+      pipeDetails = `${pipelineInfo.failed.length} check(s) falhando no PR #${pipelineInfo.prNumber}`;
+    } else if (pipelineInfo.status === 'TIMED_OUT') {
+      pipeBadge = '🔴 Timed Out';
+      pipeDetails = `${pipelineInfo.timedOut.length} check(s) com timeout no PR #${pipelineInfo.prNumber}`;
+    } else if (pipelineInfo.status === 'IN_PROGRESS') {
+      pipeBadge = '🟡 In Progress';
+      pipeDetails = `${pipelineInfo.inProgress.length} check(s) em execução no PR #${pipelineInfo.prNumber}`;
+    }
+  }
+
   let md = `# 🛡️ Relatório de Code Review — ${appName}\n\n`;
   md += `> **Data**: ${new Date().toLocaleString('pt-BR')}  \n`;
   md += `> **Status**: ${divergences.length === 0 ? '🟢 Aprovado' : '🔴 Requer Ajustes'}  \n`;
   md += `> **Tarefa**: ${taskTitle} (${taskSource})  \n\n`;
 
-  md += `## 1. 📊 Métricas da Avaliação\n`;
-  md += `- Regras ativas aplicadas: \`${activeRules.length}\`\n`;
-  md += `- Divergências encontradas: \`${divergences.length}\`\n\n`;
+  md += `## 1. 📊 Resumo Executivo\n\n`;
+  md += `| Eixo / Métrica | Status | Detalhes |\n`;
+  md += `| :--- | :--- | :--- |\n`;
+  md += `| **Status Geral** | ${divergences.length === 0 ? '🟢 Aprovado' : '🔴 Requer Ajustes'} | ${divergences.length === 0 ? 'Código aprovado para merge' : `${divergences.length} divergência(s) detectada(s)`} |\n`;
+  md += `| **Pipeline CI/CD** | ${pipeBadge} | ${pipeDetails} |\n`;
+  md += `| **Regras Ativas** | 🛡️ Conforme | ${activeRules.length} regra(s) aplicadas |\n`;
+  md += `| **Divergências** | ${divergences.length === 0 ? '✅ 0' : `⚠️ ${divergences.length}`} | ${divergences.length === 0 ? 'Nenhum desvio detectado' : 'Requer resolução antes do merge'} |\n\n`;
+
+  if (pipelineInfo && pipelineInfo.configured) {
+    md += `## 2. 🚦 Pipeline de CI/CD (GitHub Actions)\n\n`;
+    const blocking = [...(pipelineInfo.failed || []), ...(pipelineInfo.timedOut || [])];
+    if (blocking.length > 0) {
+      md += `### ❌ Checks Reprovados na Pipeline:\n\n`;
+      for (const f of blocking) {
+        md += `- 🔴 **${f.name}** (${f.workflowName || 'Workflow'}): [Ver logs no GitHub Actions](${f.detailsUrl})\n`;
+      }
+      md += `\n`;
+    }
+
+    if (pipelineInfo.inProgress && pipelineInfo.inProgress.length > 0) {
+      md += `### 🟡 Checks em Andamento:\n\n`;
+      for (const p of pipelineInfo.inProgress) {
+        md += `- 🟡 **${p.name}** (${p.workflowName || 'Workflow'}): [Acompanhar execução no GitHub Actions](${p.detailsUrl})\n`;
+      }
+      md += `\n`;
+    }
+
+    if (pipelineInfo.successful > 0) {
+      md += `### ✅ Jobs Aprovados:\n\n`;
+      md += `> **${pipelineInfo.successful} de ${pipelineInfo.total}** checks concluídos com sucesso no [PR #${pipelineInfo.prNumber}](${pipelineInfo.prUrl}).\n\n`;
+    }
+  }
 
   if (divergences.length > 0) {
-    md += `## 2. ❌ Divergências Detectadas\n\n`;
+    md += `## 3. ❌ Divergências Detectadas\n\n`;
     for (const d of divergences) {
       md += `### 🔴 [\`${d.file}:${d.line}\`](file://${join(targetDir, d.file)}#L${d.line})\n`;
+      md += `- **Eixo**: \`${d.axis || 'Standards'}\`\n`;
       md += `- **Regra**: \`${d.ruleId}\`\n`;
       md += `- **Fonte**: **${d.docRef}**\n`;
       md += `- **Detalhes**: ${d.description}\n`;
@@ -230,6 +358,7 @@ export const runCodeReview = async (userOptions = {}) => {
       md += `- **Sugestão**: \`${d.suggestion}\`\n\n`;
     }
   } else {
+    md += `## 3. 🎯 Conformidade de Padrões\n\n`;
     md += `> ✅ **Parabéns!** O código segue fielmente todos os padrões definidos pelo repositório.\n\n`;
   }
 
