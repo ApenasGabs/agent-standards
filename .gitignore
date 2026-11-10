@@ -7,3 +7,4 @@ review-fixes.patch
 REVIEW_REPORT.md
 .env
 .env.local
+.agents/

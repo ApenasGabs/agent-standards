@@ -87,6 +87,32 @@ test('ci-review: deve retornar IN_PROGRESS quando houver checks em execução se
   assert.strictEqual(result.inProgress.length, 1);
 });
 
+test('ci-review: deve retornar TIMED_OUT e listar checks quando houver tempo limite excedido', () => {
+  const checks = [
+    {
+      name: 'Build and Unit Tests',
+      status: 'COMPLETED',
+      conclusion: 'SUCCESS',
+      workflowName: 'CI',
+      detailsUrl: 'https://github.com/org/repo/actions/runs/123/job/1',
+    },
+    {
+      name: 'Playwright E2E Long Suite',
+      status: 'COMPLETED',
+      conclusion: 'TIMED_OUT',
+      workflowName: 'E2E',
+      detailsUrl: 'https://github.com/org/repo/actions/runs/123/job/timeout-1',
+    },
+  ];
+
+  const result = evaluateCIPipeline(checks);
+  assert.strictEqual(result.configured, true);
+  assert.strictEqual(result.status, 'TIMED_OUT');
+  assert.strictEqual(result.timedOut.length, 1);
+  assert.strictEqual(result.timedOut[0].name, 'Playwright E2E Long Suite');
+  assert.match(result.timedOut[0].detailsUrl, /timeout-1/);
+});
+
 test('ci-review: deve bloquear a aprovação geral do PR caso haja checks falhando na pipeline', () => {
   const failingChecks = [
     {
