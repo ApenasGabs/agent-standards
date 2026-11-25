@@ -11,7 +11,9 @@
  */
 
 import process from 'node:process';
+import { parseArgs } from 'node:util';
 import { discoverRepoStandards, writeConfigFile } from '../src/discover.mjs';
+import { statusLabel } from '../src/review/report.mjs';
 import { runCodeReview } from '../src/review.mjs';
 import { syncAgentDocs } from '../src/sync.mjs';
 
@@ -28,10 +30,17 @@ Comandos:
   sync        Sincroniza AGENTS.md, CLAUDE.md, .cursorrules e copilot-instructions
   review      Executa auditoria de Spec & Standards no diff da branch atual
 
+Códigos de saída de 'review': 0 sem bloqueio, 1 reprovado, 2 inconclusivo
+
+Opções para 'sync' e 'init':
+  --force         Substitui também documentação escrita à mão
+
 Opções para 'review':
   --base <ref>    Branch base para comparação (padrão: origin/main)
   --output <path> Arquivo de saída para o relatório (padrão: REVIEW_REPORT.md)
-  --patch <path>  Arquivo para o patch unificado (padrão: review-fixes.patch)
+  --head <ref>    Commit avaliado (padrão: HEAD)
+  --task <id>     Número da issue (padrão: deduzido da branch)
+  --json          Imprime o resultado em JSON
   --target <dir>  Diretório alvo a ser inspecionado (padrão: diretório atual)
 
 Exemplos:
@@ -51,6 +60,10 @@ const main = async () => {
   }
 
   const cwd = process.cwd();
+  const syncOptions = {
+    force: args.includes('--force'),
+    onSkip: (doc) => console.warn(`⏭️  ${doc} mantido: foi escrito à mão (use --force para substituir).`),
+  };
 
   if (command === 'discover') {
     console.log(`🔍 [agent-standards] Analisando repositório em: ${cwd}...`);
@@ -80,7 +93,7 @@ const main = async () => {
     console.log(`📄 Configuração salva em: ${configPath}`);
 
     console.log(`🔄 Compilando arquivos nativos de agentes...`);
-    const files = syncAgentDocs(cwd, generatedConfig);
+    const files = syncAgentDocs(cwd, generatedConfig, syncOptions);
     console.log(`✨ Arquivos sincronizados com sucesso:`);
     files.forEach((f) => console.log(`   • ${f}`));
     console.log(`\n🎉 Pronto! Todos os seus agentes (AGY, Claude, Cursor, Copilot) agora compartilham as mesmas regras.`);
@@ -89,28 +102,29 @@ const main = async () => {
 
   if (command === 'sync') {
     console.log(`🔄 [agent-standards] Sincronizando documentações de agentes a partir de agent.config.json...`);
-    const files = syncAgentDocs(cwd);
+    const files = syncAgentDocs(cwd, null, syncOptions);
     console.log(`✨ Documentações atualizadas:`);
     files.forEach((f) => console.log(`   • ${f}`));
     return;
   }
 
   if (command === 'review') {
-    console.log(`🛡️  [agent-standards] Iniciando Code Review...`);
-    const reviewOpts = { target: cwd };
-    for (let i = 1; i < args.length; i++) {
-      if (args[i] === '--base' && args[i + 1]) reviewOpts.base = args[++i];
-      if (args[i] === '--target' && args[i + 1]) reviewOpts.target = args[++i];
-      if (args[i] === '--output' && args[i + 1]) reviewOpts.output = args[++i];
-      if (args[i] === '--patch' && args[i + 1]) reviewOpts.patch = args[++i];
+    const names = ['base', 'head', 'task', 'target', 'output'];
+    const { values } = parseArgs({
+      args: args.slice(1),
+      options: { ...Object.fromEntries(names.map((n) => [n, { type: 'string' }])), json: { type: 'boolean' } },
+    });
+    const { json, ...reviewOpts } = values;
+    if (!json) console.log(`🛡️  [agent-standards] Iniciando Code Review...`);
+    const res = await runCodeReview({ target: cwd, ...reviewOpts });
+    if (json) {
+      console.log(JSON.stringify(res, null, 2));
+    } else {
+      console.log(`\n🏁 Resultado: ${statusLabel(res.status)}`);
+      console.log(`📄 Relatório: ${res.reportPath}`);
     }
-
-    const res = await runCodeReview(reviewOpts);
-    console.log(`\n🏁 Resultado: ${res.status === 'APPROVED' ? '🟢 Aprovado' : '🔴 Requer Ajustes'}`);
-    console.log(`📄 Relatório: ${res.reportPath}`);
-    if (res.patchPath) {
-      console.log(`🩹 Patch gerado: ${res.patchPath}`);
-    }
+    if (res.status === 'NEEDS_CHANGES') process.exitCode = 1;
+    if (res.status === 'INCONCLUSIVE') process.exitCode = 2;
     return;
   }
 

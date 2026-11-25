@@ -52,7 +52,7 @@ flowchart TD
         ReviewCmd["npx @apenasgabs/agent-standards review"]
         SpecAxis["Eixo 1: Aderência à Tarefa (Spec)"]
         StandardsAxis["Eixo 2: Conformidade com Padrões (Standards)"]
-        Report["Relatório + review-fixes.patch"]
+        Report["Relatório de revisão"]
     end
 
     Repo --> Discover
@@ -141,6 +141,29 @@ Você tem controle total sobre as regras que seu time deseja aplicar:
   "docsSync": ["AGENTS.md", "CLAUDE.md", ".github/copilot-instructions.md", ".cursorrules"]
 }
 ```
+
+### Exceções por pasta
+
+```json
+{
+  "overrides": [
+    { "paths": ["src/**"], "rules": { "cleanCode": { "blockConsoleLog": false } } }
+  ]
+}
+```
+
+O revisor verifica `functions`, `typescript.noExplicitAny`, `ui.requireDataTestId`, `security.blockInnerHTML`, `security.blockHardcodedSecrets`, `cleanCode.blockConsoleLog` e `cleanCode.blockEmptyCatch`. Outras regras servem à documentação e aparecem no relatório como não verificadas.
+
+A avaliação usa a configuração da branch base, para que uma entrega não afrouxe as próprias regras.
+
+| Status | Saída | Significado |
+|---|---|---|
+| 🟢 Aprovado | 0 | Nada pendente |
+| 🟡 Pendente de Confirmação | 0 | Há requisito, aviso ou CI a confirmar por revisão |
+| 🔴 Reprovado / Requer Ajustes | 1 | Violação grave ou CI falhando |
+| 🔴 Reprovado / Revisão Inconclusiva | 2 | Diff vazio, base inexistente, configuração inválida ou issue ilegível |
+
+O `review` não gera mais `review-fixes.patch`, porque o patch não era aplicável. O `sync` preserva documentos escritos à mão, salvo com `--force`.
 
 ---
 
