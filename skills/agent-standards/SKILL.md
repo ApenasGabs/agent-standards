@@ -50,4 +50,4 @@ O motor não impõe regras arbitrárias. Ele inspeciona:
 2. **Eixo 2: Conformidade com Padrões (Standards)**
    - Audita estritamente as regras que o próprio repositório definiu no seu `agent.config.json` ou nos seus arquivos de documentação (`AGENTS.md`, `CLAUDE.md`, `copilot-instructions.md`).
    - Cita a linha de código e a regra violada.
-   - Gera automaticamente o arquivo `review-fixes.patch`.
+   - Sai com código 1 se reprovado e 2 se a revisão for inconclusiva.

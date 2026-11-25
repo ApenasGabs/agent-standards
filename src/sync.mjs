@@ -5,15 +5,15 @@ import { dirname, join } from 'node:path';
  * Compila a configuração de padrões em artefatos para múltiplos agentes
  * Suporta TypeScript, Java e Go.
  */
-export const syncAgentDocs = (targetDir, customConfig = null) => {
+export const syncAgentDocs = (targetDir, customConfig = null, { force = false, onSkip = () => {} } = {}) => {
   let config = customConfig;
   const configPath = join(targetDir, 'agent.config.json');
 
   if (!config && existsSync(configPath)) {
     try {
       config = JSON.parse(readFileSync(configPath, 'utf-8'));
-    } catch {
-      // fallback
+    } catch (err) {
+      throw new Error(`agent.config.json inválido; nenhum documento foi alterado: ${err.message}`);
     }
   }
 
@@ -29,6 +29,7 @@ export const syncAgentDocs = (targetDir, customConfig = null) => {
     };
   }
 
+  const GENERATED_MARK = 'Gerado automaticamente por `@apenasgabs/agent-standards`';
   const generatedFiles = [];
   const rules = config.rules || {};
   const lang = config.language || 'typescript/javascript';
@@ -138,6 +139,10 @@ export const syncAgentDocs = (targetDir, customConfig = null) => {
 
   for (const doc of targets) {
     const fullPath = join(targetDir, doc);
+    if (!force && existsSync(fullPath) && !readFileSync(fullPath, 'utf-8').includes(GENERATED_MARK)) {
+      onSkip(doc);
+      continue;
+    }
     mkdirSync(dirname(fullPath), { recursive: true });
 
     let content = '';
