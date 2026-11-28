@@ -33,14 +33,19 @@ export const discoverRepoStandards = (targetDir) => {
     else if (existsSync(gradleKtsPath)) buildContent = readFileSync(gradleKtsPath, 'utf-8');
 
     // Java Version
-    const javaVerMatch = buildContent.match(/<java\.version>(\d+)<\/java\.version>/) ||
-                         buildContent.match(/sourceCompatibility\s*=\s*['"]?(\d+)['"]?/);
+    const javaVerMatch =
+      buildContent.match(/<java\.version>(\d+)<\/java\.version>/) ||
+      buildContent.match(/<maven\.compiler\.(?:source|target|release)>(\d+)<\/maven\.compiler\.(?:source|target|release)>/) ||
+      buildContent.match(/sourceCompatibility\s*=\s*['"]?(?:JavaVersion\.VERSION_)?(\d+)['"]?/) ||
+      buildContent.match(/JavaLanguageVersion\.of\((\d+)\)/);
     findings.details.javaVersion = javaVerMatch ? javaVerMatch[1] : '17';
 
     // Framework
     if (buildContent.includes('spring-boot')) {
       findings.framework = 'spring-boot';
-      const bootVerMatch = buildContent.match(/<version>(3\.\d+\.\d+)<\/version>/);
+      const bootVerMatch =
+        buildContent.match(/<version>(3\.\d+\.\d+)<\/version>/) ||
+        buildContent.match(/org\.springframework\.boot['"]?\s*\)?\s*version\s*['"](\d+\.\d+\.\d+)['"]/);
       if (bootVerMatch) findings.details.springBootVersion = bootVerMatch[1];
     } else if (buildContent.includes('quarkus')) {
       findings.framework = 'quarkus';
@@ -67,26 +72,28 @@ export const discoverRepoStandards = (targetDir) => {
     }
 
     // Arquitetura em camadas através da varredura de pacotes Java
-    const layersFound = [];
+    const layersFound = new Set();
+    const ignoredJavaDirs = new Set(['target', 'build', 'node_modules', 'out']);
     const scanJavaDirs = (dir) => {
       try {
         const entries = readdirSync(dir, { withFileTypes: true });
         for (const e of entries) {
-          if (e.isDirectory()) {
-            if (['controller', 'controllers'].includes(e.name)) layersFound.push('controller');
-            if (['service', 'services'].includes(e.name)) layersFound.push('service');
-            if (['repository', 'repositories'].includes(e.name)) layersFound.push('repository');
-            if (['model', 'models', 'entity', 'entities'].includes(e.name)) layersFound.push('model');
-            if (['dto', 'dtos'].includes(e.name)) layersFound.push('dto');
-            scanJavaDirs(join(dir, e.name));
-          }
+          if (!e.isDirectory() || e.name.startsWith('.') || ignoredJavaDirs.has(e.name)) continue;
+          if (['controller', 'controllers'].includes(e.name)) layersFound.add('controller');
+          if (['service', 'services'].includes(e.name)) layersFound.add('service');
+          if (['repository', 'repositories'].includes(e.name)) layersFound.add('repository');
+          if (['model', 'models', 'entity', 'entities'].includes(e.name)) layersFound.add('model');
+          if (['dto', 'dtos'].includes(e.name)) layersFound.add('dto');
+          scanJavaDirs(join(dir, e.name));
         }
-      } catch {}
+      } catch (_err) {
+        /* ignora diretórios sem permissão de leitura durante a varredura */
+      }
     };
     scanJavaDirs(targetDir);
 
-    if (layersFound.length > 0) {
-      findings.architecture = `Layered Architecture (${Array.from(new Set(layersFound)).join(', ')})`;
+    if (layersFound.size > 0) {
+      findings.architecture = `Layered Architecture (${Array.from(layersFound).join(', ')})`;
     }
 
     const generatedConfig = {
@@ -117,6 +124,9 @@ export const discoverRepoStandards = (targetDir) => {
           framework: findings.test || 'junit-5',
           useSpringBootTest: true,
         },
+        security: {
+          blockHardcodedSecrets: true,
+        },
       },
       docsSync: ['AGENTS.md', 'CLAUDE.md', '.github/copilot-instructions.md', '.cursorrules'],
     };
@@ -134,10 +144,10 @@ export const discoverRepoStandards = (targetDir) => {
     findings.test = 'go-test';
 
     const modContent = readFileSync(goModPath, 'utf-8');
-    const modMatch = modContent.match(/module\s+([^\s]+)/);
+    const modMatch = modContent.match(/^module\s+([^\s]+)/m);
     if (modMatch) findings.details.module = modMatch[1];
 
-    const verMatch = modContent.match(/go\s+(\d+\.\d+)/);
+    const verMatch = modContent.match(/^go\s+(\d+\.\d+)/m);
     findings.details.goVersion = verMatch ? verMatch[1] : '1.22';
 
     // Frameworks & Libs de Go
@@ -160,16 +170,21 @@ export const discoverRepoStandards = (targetDir) => {
 
     const goFiles = [];
     const collectGo = (dir, depth = 0) => {
-      if (depth > 2 || goFiles.length >= 8) return;
+      if (depth > 3 || goFiles.length >= 8) return;
       try {
         const entries = readdirSync(dir, { withFileTypes: true });
         for (const e of entries) {
-          if (e.name.startsWith('.') || e.name === 'vendor') continue;
+          if (e.name.startsWith('.') || e.name === 'vendor' || e.name === 'node_modules') continue;
           const full = join(dir, e.name);
           if (e.isDirectory()) collectGo(full, depth + 1);
-          else if (e.name.endsWith('.go')) goFiles.push(full);
+          else if (e.name.endsWith('.go')) {
+            goFiles.push(full);
+            if (goFiles.length >= 8) break;
+          }
         }
-      } catch {}
+      } catch (_err) {
+        /* ignora diretórios inacessíveis durante amostragem */
+      }
     };
     collectGo(targetDir);
 
@@ -179,7 +194,9 @@ export const discoverRepoStandards = (targetDir) => {
         if (c.includes('signal.NotifyContext') || c.includes('context.Context')) hasSignalContext = true;
         if (c.includes('sync.WaitGroup') || c.includes('go func(')) hasGoroutines = true;
         if (c.includes('if err != nil')) hasErrorCheck = true;
-      } catch {}
+      } catch (_err) {
+        /* ignora arquivos ilegíveis durante amostragem */
+      }
     }
 
     findings.details.contextPropagation = hasSignalContext;
@@ -214,6 +231,9 @@ export const discoverRepoStandards = (targetDir) => {
         naming: {
           exportedPascalCase: true,
           unexportedCamelCase: true,
+        },
+        security: {
+          blockHardcodedSecrets: true,
         },
       },
       docsSync: ['AGENTS.md', 'CLAUDE.md', '.github/copilot-instructions.md', '.cursorrules'],
