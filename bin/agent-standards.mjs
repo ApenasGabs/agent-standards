@@ -11,6 +11,7 @@
  *   agent-standards ux-audit   Audita a UI renderizada (rotas × temas × viewports) via navegador remoto
  */
 
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import process from 'node:process';
@@ -19,6 +20,7 @@ import { discoverRepoStandards, writeConfigFile } from '../src/discover.mjs';
 import { statusLabel } from '../src/review/report.mjs';
 import { runCodeReview } from '../src/review.mjs';
 import { syncAgentDocs } from '../src/sync.mjs';
+import { detectAuthor, dispatchRework } from '../src/dispatch.mjs';
 import { applyProfile, ConfigError, loadProfile, parseConfig } from '../src/review/config.mjs';
 import { runUxAudit, UxAuditError } from '../src/ux/audit.mjs';
 import { resolveAuditConfig, UxConfigError } from '../src/ux/config.mjs';
@@ -53,6 +55,8 @@ Opções para 'review':
   --profile <p>   Perfil global (nome em profiles/ ou caminho; padrão: AGENT_STANDARDS_PROFILE)
   --ux-audit auto Roda o ux-audit quando a UI mudou e não há auditoria deste commit
   --ux-routes a,b Rotas usadas pelo ux-audit automático
+  --dispatch      Se reprovado e o autor for agente de IA, abre retrabalho no Paperclip (PAPERCLIP_* no ambiente)
+  --author <a>    ai | human | auto (padrão) para decidir o despacho
 
 Opções para 'ux-audit' (padrões vêm da seção "ux" do agent.config.json):
   --url <url>       URL base do app (padrão: ux.baseUrl ou o preview publicado para o HEAD)
@@ -132,12 +136,17 @@ const main = async () => {
   }
 
   if (command === 'review') {
-    const names = ['base', 'head', 'task', 'target', 'output', 'profile', 'ux-audit', 'ux-routes'];
+    const names = ['base', 'head', 'task', 'target', 'output', 'profile', 'ux-audit', 'ux-routes', 'author'];
     const { values } = parseArgs({
       args: args.slice(1),
-      options: { ...Object.fromEntries(names.map((n) => [n, { type: 'string' }])), json: { type: 'boolean' } },
+      options: { ...Object.fromEntries(names.map((n) => [n, { type: 'string' }])), json: { type: 'boolean' }, dispatch: { type: 'boolean' } },
     });
-    const { json, 'ux-audit': uxAudit, 'ux-routes': uxRoutes, ...reviewOpts } = values;
+    const { json, dispatch, author = 'auto', 'ux-audit': uxAudit, 'ux-routes': uxRoutes, ...reviewOpts } = values;
+    if (!['ai', 'human', 'auto'].includes(author)) {
+      console.error('❌ --author aceita ai, human ou auto.');
+      process.exitCode = 2;
+      return;
+    }
     if (uxAudit && !['auto', 'off'].includes(uxAudit)) {
       console.error('❌ --ux-audit aceita "auto" ou "off".');
       process.exitCode = 2;
@@ -147,11 +156,22 @@ const main = async () => {
     if (uxRoutes) reviewOpts.uxRoutes = uxRoutes.split(',').map((r) => r.trim()).filter(Boolean);
     if (!json) console.log(`🛡️  [agent-standards] Iniciando Code Review...`);
     const res = await runCodeReview({ target: cwd, ...reviewOpts });
+    let dispatched = null;
+    if (dispatch) {
+      if (res.status !== 'NEEDS_CHANGES') dispatched = { dispatched: false, reason: 'sem bloqueios: nada a despachar' };
+      else {
+        const targetDir = resolve(reviewOpts.target ?? cwd);
+        const who = detectAuthor((command, gitArgs) => execFileSync(command, gitArgs, { cwd: targetDir, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }), author);
+        dispatched = who.type === 'ai' ? { ...(await dispatchRework({ result: res })), author: who } : { dispatched: false, reason: `autor humano (${who.evidence})`, author: who };
+      }
+    }
     if (json) {
-      console.log(JSON.stringify(res, null, 2));
+      console.log(JSON.stringify({ ...res, dispatch: dispatched }, null, 2));
     } else {
       console.log(`\n🏁 Resultado: ${statusLabel(res.status)}`);
       console.log(`📄 Relatório: ${res.reportPath}`);
+      if (dispatched?.dispatched) console.log(`🚀 Retrabalho despachado no Paperclip: ${dispatched.issue}${dispatched.warning ? ` (${dispatched.warning})` : ''}`);
+      else if (dispatched) console.warn(`⏭️  Sem despacho: ${dispatched.reason}`);
     }
     if (res.status === 'NEEDS_CHANGES') process.exitCode = 1;
     if (res.status === 'INCONCLUSIVE') process.exitCode = 2;

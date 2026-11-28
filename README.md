@@ -193,6 +193,29 @@ O perfil `kraken` liga o Eixo UX inteiro (regras estáticas + gate renderizado c
 
 ---
 
+## 🔁 Retrabalho automático no Paperclip (`--dispatch`)
+
+```bash
+npx @apenasgabs/agent-standards review --profile kraken --ux-audit auto --task 42 --dispatch
+```
+
+Com status 🔴 e autoria de agente de IA, o review abre uma issue de retrabalho no Paperclip, só com os bloqueios (arquivo e linha, CI falhando, motivos de inconclusivo), atribuída ao agente configurado e já acordado. A autoria vem do autor, da branch ou da mensagem do último commit (palavras inteiras como `forge`, `sentinel`, `[bot]`, `APE-123`); force com `--author ai|human`.
+
+| Variável | Uso |
+|---|---|
+| `PAPERCLIP_URL` | Endereço do Paperclip |
+| `PAPERCLIP_API_KEY` ou `PAPERCLIP_TOKEN_FILE` | Token (direto ou arquivo) |
+| `PAPERCLIP_COMPANY_ID`, `PAPERCLIP_PROJECT_ID` | Onde a issue é criada |
+| `PAPERCLIP_DISPATCH_AGENT_ID` | Agente que recebe o retrabalho |
+
+Variável ausente não quebra o review: o despacho é pulado com o motivo.
+
+`--task` aceita número da issue, arquivo de spec relativo ao repositório (`--task docs/specs/login.md`) ou texto livre.
+
+**Migração do revisor legado do Kraken**: o script antigo em `/workspace/.agents/scripts` pode virar um repasse fino para `review --profile kraken --ux-audit auto`, mantendo caminho e flags (`--target`, `--task`, `--base`, `--dispatch`).
+
+---
+
 ## 🎨 Eixo UX
 
 Interface ruim raramente aparece no diff: ela aparece na tela. O Eixo UX tem três camadas.

@@ -54,10 +54,22 @@ const attempt = (fn) => {
   }
 };
 
-const loadTask = (run, requested, branch) => {
-  const id = String(requested || branch.match(/#(\d+)/)?.[1] || '').replace(/^#/, '');
+const symbolsOf = (text) => [...text.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+
+/** Tarefa por número de issue, arquivo de spec (relativo ao alvo) ou texto livre. */
+const loadTask = (run, requested, branch, targetDir) => {
+  const raw = String(requested ?? '').trim();
+  if (raw && !/^#?\d+$/.test(raw)) {
+    const path = resolve(targetDir, raw);
+    if (/\.(?:md|mdx|txt)$/i.test(raw) || existsSync(path)) {
+      if (!existsSync(path)) return { title: 'Spec não encontrada', source: raw, requirements: [], problem: `Arquivo de spec "${raw}" não encontrado em ${targetDir}.` };
+      return { title: basename(raw), source: `Spec ${raw}`, requirements: extractRequirements(readFileSync(path, 'utf-8')) };
+    }
+    const items = extractRequirements(raw);
+    return { title: 'Tarefa informada como texto', source: 'texto do --task', requirements: items.length > 0 ? items : [{ text: raw, symbols: symbolsOf(raw) }] };
+  }
+  const id = (raw || branch.match(/#(\d+)/)?.[1] || '').replace(/^#/, '');
   if (!id) return { title: 'Tarefa não identificada', source: 'nenhuma issue vinculada', requirements: [] };
-  if (!/^\d+$/.test(id)) return { title: 'Tarefa inválida', source: id, requirements: [], problem: `--task espera o número da issue, recebeu "${id}".` };
   const res = attempt(() => JSON.parse(run('gh', ['issue', 'view', id, '--json', 'title,body'])));
   if (!res.ok) {
     return { title: `Issue #${id}`, source: `Issue #${id}`, requirements: [], problem: `Não foi possível ler a issue #${id}: ${res.error}` };
@@ -245,7 +257,7 @@ export const runCodeReview = async (userOptions = {}) => {
     if (options.head === 'HEAD' && dirty.value) notes.push('Há alterações não commitadas, que não foram avaliadas.');
   }
 
-  const task = loadTask(run, options.task, branch);
+  const task = loadTask(run, options.task, branch, targetDir);
   if (task.problem) problems.push(task.problem);
   const requirements = matchRequirements(task.requirements, files);
   const ci = refs.ok ? loadCI(run, branch, refs.value.head) : evaluateCIPipeline([]);
