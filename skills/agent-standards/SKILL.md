@@ -5,7 +5,7 @@ description: "Universal Agent Standards Engine — Discover, generate, and enfor
 
 # Universal Agent Standards Engine (AGY Skill)
 
-Esta skill capacita qualquer agente de IA (Antigravity/AGY, Claude Code, Cursor) a auto-descobrir padrões de código em repositórios desconhecidos, sincronizar arquivos de regras entre ferramentas e auditar a conformidade de PRs e tarefas em dois eixos (Spec e Standards).
+Esta skill capacita qualquer agente de IA (Antigravity/AGY, Claude Code, Cursor) a auto-descobrir padrões de código em repositórios desconhecidos, sincronizar arquivos de regras entre ferramentas e auditar a conformidade de PRs e tarefas nos eixos Spec, Standards e UX.
 
 ---
 
@@ -23,8 +23,11 @@ npx @apenasgabs/agent-standards discover
 # 3. Sincronizar AGENTS.md, CLAUDE.md, .cursorrules e .github/copilot-instructions.md
 npx @apenasgabs/agent-standards sync
 
-# 4. Executar Code Review nos dois eixos (Aderência à Tarefa vs Padrões Documentados)
+# 4. Executar Code Review (Spec, Standards, UX e CI)
 npx @apenasgabs/agent-standards review --base origin/main
+
+# 5. Auditar a UI renderizada (rotas × temas × viewports) quando a mudança toca interface
+npx @apenasgabs/agent-standards ux-audit --routes /rota-afetada
 ```
 
 ---
@@ -39,7 +42,7 @@ O motor não impõe regras arbitrárias. Ele inspeciona:
 
 ---
 
-## 3. Os Dois Eixos de Auditoria (Review)
+## 3. Os Eixos de Auditoria (Review)
 
 1. **Eixo 1: Aderência à Tarefa (Spec)**
    - Extrai os requisitos da Issue ou PR do GitHub.
@@ -51,3 +54,8 @@ O motor não impõe regras arbitrárias. Ele inspeciona:
    - Audita estritamente as regras que o próprio repositório definiu no seu `agent.config.json` ou nos seus arquivos de documentação (`AGENTS.md`, `CLAUDE.md`, `copilot-instructions.md`).
    - Cita a linha de código e a regra violada.
    - Sai com código 1 se reprovado e 2 se a revisão for inconclusiva.
+
+3. **Eixo 3: UX**
+   - Regras estáticas `rules.ux.*` no diff (`!important`, cores fora dos tokens, padrões de estética genérica, emoji em UI, botão só com ícone sem nome acessível).
+   - Incorpora o `.ux-review/ux-report.json` do mesmo commit gerado por `ux-audit`; com a seção `ux` na config da base, mudança de UI sem auditoria fica pendente.
+   - O julgamento visual (hierarquia, slop, microcopy, estados) é da skill `ux-reviewer`.

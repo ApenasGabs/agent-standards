@@ -48,12 +48,15 @@ flowchart TD
         Copilot[".github/copilot-instructions.md (Copilot)"]
     end
 
-    subgraph REVIEW ["4. Auditoria em Dois Eixos (Review)"]
+    subgraph REVIEW ["4. Auditoria (Review)"]
         ReviewCmd["npx @apenasgabs/agent-standards review"]
-        SpecAxis["Eixo 1: Aderência à Tarefa (Spec)"]
-        StandardsAxis["Eixo 2: Conformidade com Padrões (Standards)"]
+        SpecAxis["Eixo Spec: Aderência à Tarefa"]
+        StandardsAxis["Eixo Standards: Padrões de Código"]
+        UxAxis["Eixo UX: regras estáticas + auditoria renderizada"]
         Report["Relatório de revisão"]
     end
+
+    UxAudit["npx @apenasgabs/agent-standards ux-audit"]
 
     Repo --> Discover
     Discover --> Config
@@ -66,8 +69,11 @@ flowchart TD
     Config --> ReviewCmd
     ReviewCmd --> SpecAxis
     ReviewCmd --> StandardsAxis
+    ReviewCmd --> UxAxis
+    UxAudit --> UxAxis
     SpecAxis --> Report
     StandardsAxis --> Report
+    UxAxis --> Report
 ```
 
 ---
@@ -95,6 +101,11 @@ npx @apenasgabs/agent-standards sync
 ### 4. Executar Code Review na Branch Ativa
 ```bash
 npx @apenasgabs/agent-standards review --base origin/main
+```
+
+### 5. Auditar a UI Renderizada (quando a mudança toca interface)
+```bash
+BROWSERLESS_HOST=<host:porta> BROWSERLESS_TOKEN=<token> npx @apenasgabs/agent-standards ux-audit --routes /,/conta
 ```
 
 ---
@@ -152,7 +163,7 @@ Você tem controle total sobre as regras que seu time deseja aplicar:
 }
 ```
 
-O revisor verifica `functions`, `typescript.noExplicitAny`, `ui.requireDataTestId`, `security.blockInnerHTML`, `security.blockHardcodedSecrets`, `cleanCode.blockConsoleLog` e `cleanCode.blockEmptyCatch`. Outras regras servem à documentação e aparecem no relatório como não verificadas.
+O revisor verifica `functions`, `typescript.noExplicitAny`, `ui.requireDataTestId`, `security.blockInnerHTML`, `security.blockHardcodedSecrets`, `cleanCode.blockConsoleLog`, `cleanCode.blockEmptyCatch` e as regras `ux.*` (veja [Eixo UX](#-eixo-ux)). Outras regras servem à documentação e aparecem no relatório como não verificadas.
 
 A avaliação usa a configuração da branch base, para que uma entrega não afrouxe as próprias regras.
 
@@ -164,6 +175,74 @@ A avaliação usa a configuração da branch base, para que uma entrega não afr
 | 🔴 Reprovado / Revisão Inconclusiva | 2 | Diff vazio, base inexistente, configuração inválida ou issue ilegível |
 
 O `review` não gera mais `review-fixes.patch`, porque o patch não era aplicável. O `sync` preserva documentos escritos à mão, salvo com `--force`.
+
+---
+
+## 🎨 Eixo UX
+
+Interface ruim raramente aparece no diff: ela aparece na tela. O Eixo UX tem três camadas.
+
+### 1. Regras estáticas (no `review`)
+
+| Regra (`rules.ux.*`) | Severidade | O que acusa |
+|---|---|---|
+| `blockImportant` (alias `ui.noImportant`) | 🔴 | `!important` em CSS ou estilo inline |
+| `blockHardcodedColors` | 🟡 | Hex/`rgb()`/`hsl()` fora de definição de token (`--cor: #fff` é permitido) e cores arbitrárias do Tailwind (`text-[#333]`) |
+| `blockSlopPatterns` | 🟡 | Estética genérica de IA: gradiente roxo/rosa, `backdrop-blur`, `shadow-2xl`/glow, `border-l-4`, `bg-clip-text` |
+| `blockEmojiInUi` | 🟡 | Emoji em texto JSX/markup e em `aria-label`, `title`, `placeholder`, `alt`, `label` |
+| `requireAccessibleIconButton` | 🟡 | `<button>`/`<IconButton>` só com ícone e sem `aria-label`/`title`/`sr-only` |
+
+Use `overrides` para liberar cores no arquivo de tokens.
+
+### 2. Auditoria renderizada (`ux-audit`)
+
+Renderiza cada rota × tema × viewport (375×812, 768×1024, 1440×900 por padrão) e mede:
+
+- 🔴 overflow horizontal, exceção não tratada, rota que não carrega ou redireciona para o login, viewport não aplicada;
+- 🟡 alvos de toque abaixo de 44×44px (só em viewport touch), elemento interativo sem nome acessível, imagem sem `alt`, contraste abaixo de 4.5:1 (3:1 em texto grande) e `console.error`.
+
+Saída em `.ux-review/` (adicione ao `.gitignore`): `UX_AUDIT.md`, `ux-report.json` e um PNG por combinação. Configure na seção `ux` do `agent.config.json`:
+
+```json
+{
+  "ux": {
+    "baseUrl": "https://app.exemplo.dev",
+    "routes": ["/", { "path": "/conta", "waitFor": "[data-testid=conta]" }],
+    "themes": [
+      { "name": "light", "localStorage": { "theme": "light" }, "attributes": { "data-theme": "light" }, "colorScheme": "light" },
+      { "name": "dark", "localStorage": { "theme": "dark" }, "attributes": { "data-theme": "dark" }, "colorScheme": "dark" }
+    ],
+    "login": {
+      "path": "/login",
+      "fields": { "[data-testid=login-email]": "UX_AUDIT_EMAIL", "[data-testid=login-password]": "UX_AUDIT_PASSWORD" },
+      "submit": "[data-testid=login-submit]",
+      "waitFor": "[data-testid=app-shell]"
+    }
+  }
+}
+```
+
+`login.fields` mapeia seletor → **nome** da variável de ambiente; nenhum segredo vai para o arquivo. O login roda uma vez e a sessão é reaproveitada em todas as combinações.
+
+| Variável | Uso |
+|---|---|
+| `BROWSERLESS_HOST`, `BROWSERLESS_TOKEN` | Navegador remoto pelo protocolo Playwright (`ws://host/chromium/playwright`) |
+| `AGENT_STANDARDS_BROWSER_WS` | Endpoint Playwright completo, quando não é Browserless |
+| `AGENT_STANDARDS_CDP_URL` | Força CDP. Evite: o Browserless ignora a viewport do contexto via CDP, e a guarda `ux-viewport-mismatch` reprova a combinação |
+
+`--local` usa o Chromium da máquina. O cliente `playwright-core` é procurado no projeto, no pacote e nos módulos globais, e a versão mais nova é usada: servidores remotos recusam clientes antigos. Se a conexão cair ou travar, o comando sai com código 2 em vez de "passar" sem auditar.
+
+| Saída | Significado |
+|---|---|
+| 0 | Sem achado grave (pode haver 🟡 para o revisor avaliar) |
+| 1 | Há achado 🔴 |
+| 2 | A auditoria não rodou (config, conexão, login) |
+
+### 3. Gate no `review` e revisor de UX
+
+Com a seção `ux` no `agent.config.json` **da branch base**, toda mudança em arquivo de UI exige `ux-report.json` do mesmo commit. Sem ele (ou com relatório de outro commit) o status fica 🟡; achados 🔴 renderizados reprovam. Remover a seção `ux` na própria entrega não dispensa a auditoria.
+
+O que não é mensurável (hierarquia, slop visual, microcopy, estados, fluxo) fica com a skill [`skills/ux-reviewer`](skills/ux-reviewer/SKILL.md): um revisor independente que abre os screenshots e emite parecer binário, sem editar código.
 
 ---
 

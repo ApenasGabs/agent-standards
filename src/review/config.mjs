@@ -7,6 +7,12 @@ export const SUPPORTED_RULES = {
   'security.blockHardcodedSecrets': [true, false],
   'cleanCode.blockConsoleLog': [true, false],
   'cleanCode.blockEmptyCatch': [true, false],
+  'ui.noImportant': [true, false],
+  'ux.blockImportant': [true, false],
+  'ux.blockHardcodedColors': [true, false],
+  'ux.blockSlopPatterns': [true, false],
+  'ux.blockEmojiInUi': [true, false],
+  'ux.requireAccessibleIconButton': [true, false],
 };
 
 export class ConfigError extends Error {}
@@ -60,7 +66,8 @@ export const parseConfig = (text) => {
         .map(([k]) => k)
     ),
   ];
-  return { source: 'agent.config.json', rules, overrides, unverified };
+  if (config.ux !== undefined && !isPlainObject(config.ux)) throw new ConfigError('ux deve ser um objeto.');
+  return { source: 'agent.config.json', rules, overrides, unverified, ux: config.ux ?? null };
 };
 
 /** Suporta `*`, `**` e `?`. */
@@ -98,8 +105,10 @@ export const configFromDocs = (docs) => {
       'security.blockHardcodedSecrets': true,
       'cleanCode.blockEmptyCatch': true,
       'cleanCode.blockConsoleLog': true,
+      'ux.blockImportant': /!important/.test(text),
     },
     overrides: [],
     unverified: [],
+    ux: null,
   };
 };
