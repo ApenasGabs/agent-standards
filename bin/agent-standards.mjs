@@ -19,9 +19,10 @@ import { discoverRepoStandards, writeConfigFile } from '../src/discover.mjs';
 import { statusLabel } from '../src/review/report.mjs';
 import { runCodeReview } from '../src/review.mjs';
 import { syncAgentDocs } from '../src/sync.mjs';
-import { ConfigError, parseConfig } from '../src/review/config.mjs';
+import { applyProfile, ConfigError, loadProfile, parseConfig } from '../src/review/config.mjs';
 import { runUxAudit, UxAuditError } from '../src/ux/audit.mjs';
 import { resolveAuditConfig, UxConfigError } from '../src/ux/config.mjs';
+import { discoverPreviewForHead } from '../src/ux/discover.mjs';
 
 const printHelp = () => {
   console.log(`
@@ -49,9 +50,13 @@ Opções para 'review':
   --task <id>     Número da issue (padrão: deduzido da branch)
   --json          Imprime o resultado em JSON
   --target <dir>  Diretório alvo a ser inspecionado (padrão: diretório atual)
+  --profile <p>   Perfil global (nome em profiles/ ou caminho; padrão: AGENT_STANDARDS_PROFILE)
+  --ux-audit auto Roda o ux-audit quando a UI mudou e não há auditoria deste commit
+  --ux-routes a,b Rotas usadas pelo ux-audit automático
 
 Opções para 'ux-audit' (padrões vêm da seção "ux" do agent.config.json):
-  --url <url>       URL base do app, acessível a partir do navegador remoto
+  --url <url>       URL base do app (padrão: ux.baseUrl ou o preview publicado para o HEAD)
+  --profile <p>     Perfil global (padrão: AGENT_STANDARDS_PROFILE)
   --routes <a,b>    Rotas a auditar (ex.: /list,/stock)
   --themes <a,b>    Restringe aos temas informados
   --config <path>   Arquivo JSON alternativo com a seção "ux"
@@ -127,12 +132,19 @@ const main = async () => {
   }
 
   if (command === 'review') {
-    const names = ['base', 'head', 'task', 'target', 'output'];
+    const names = ['base', 'head', 'task', 'target', 'output', 'profile', 'ux-audit', 'ux-routes'];
     const { values } = parseArgs({
       args: args.slice(1),
       options: { ...Object.fromEntries(names.map((n) => [n, { type: 'string' }])), json: { type: 'boolean' } },
     });
-    const { json, ...reviewOpts } = values;
+    const { json, 'ux-audit': uxAudit, 'ux-routes': uxRoutes, ...reviewOpts } = values;
+    if (uxAudit && !['auto', 'off'].includes(uxAudit)) {
+      console.error('❌ --ux-audit aceita "auto" ou "off".');
+      process.exitCode = 2;
+      return;
+    }
+    if (uxAudit) reviewOpts.uxAudit = uxAudit;
+    if (uxRoutes) reviewOpts.uxRoutes = uxRoutes.split(',').map((r) => r.trim()).filter(Boolean);
     if (!json) console.log(`🛡️  [agent-standards] Iniciando Code Review...`);
     const res = await runCodeReview({ target: cwd, ...reviewOpts });
     if (json) {
@@ -147,7 +159,7 @@ const main = async () => {
   }
 
   if (command === 'ux-audit') {
-    const names = ['url', 'routes', 'themes', 'config', 'out', 'target'];
+    const names = ['url', 'routes', 'themes', 'config', 'out', 'target', 'profile'];
     const { values } = parseArgs({
       args: args.slice(1),
       options: { ...Object.fromEntries(names.map((n) => [n, { type: 'string' }])), local: { type: 'boolean' }, json: { type: 'boolean' } },
@@ -156,8 +168,18 @@ const main = async () => {
     const split = (v) => (v ? v.split(',').map((x) => x.trim()).filter(Boolean) : undefined);
     try {
       const configPath = resolve(target, values.config ?? 'agent.config.json');
-      const section = existsSync(configPath) ? parseConfig(readFileSync(configPath, 'utf-8')).ux : null;
-      const config = resolveAuditConfig(section, { url: values.url, routes: split(values.routes), themes: split(values.themes), out: values.out });
+      const own = existsSync(configPath) ? parseConfig(readFileSync(configPath, 'utf-8')) : { rules: {}, overrides: [], ux: null, source: 'sem config' };
+      const profile = loadProfile(values.profile ?? process.env.AGENT_STANDARDS_PROFILE, target);
+      const section = applyProfile(own, profile).ux;
+      let url = values.url;
+      if (!url && (!section?.baseUrl || section.baseUrl === 'auto')) {
+        try {
+          url = discoverPreviewForHead(target)?.url;
+        } catch (err) {
+          console.warn(`⚠️  Não foi possível consultar o preview do commit: ${String(err.message).split('\n')[0]}`);
+        }
+      }
+      const config = resolveAuditConfig(section, { url, routes: split(values.routes), themes: split(values.themes), out: values.out });
       if (!values.json) console.log(`🎨 [agent-standards] Auditando ${config.routes.length} rota(s) × ${config.themes.length} tema(s) × ${config.viewports.length} viewport(s) em ${config.baseUrl}...`);
       const res = await runUxAudit({ target, config, local: values.local });
       if (values.json) console.log(JSON.stringify(res, null, 2));

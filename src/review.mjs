@@ -2,12 +2,14 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, relative, resolve } from 'node:path';
 import process from 'node:process';
-import { ConfigError, configFromDocs, parseConfig, rulesForFile } from './review/config.mjs';
+import { applyProfile, ConfigError, configFromDocs, loadProfile, parseConfig, rulesForFile } from './review/config.mjs';
 import { parseAddedLines } from './review/diff.mjs';
 import { renderReport } from './review/report.mjs';
 import { checkFile, isRuleEnabled, isSourceFile, isTestFile, isUiFile } from './review/rules.mjs';
 import { extractRequirements, matchRequirements } from './review/spec.mjs';
-import { UX_REPORT_FILE } from './ux/audit.mjs';
+import { runUxAudit, UX_REPORT_FILE, UxAuditError } from './ux/audit.mjs';
+import { resolveAuditConfig, UxConfigError } from './ux/config.mjs';
+import { discoverPreviewUrl } from './ux/discover.mjs';
 import { groupFindings } from './ux/report.mjs';
 
 const DOC_FILES = ['AGENTS.md', 'CLAUDE.md', '.github/copilot-instructions.md', 'CODING_STANDARDS.md'];
@@ -155,6 +157,28 @@ const uxDivergences = (audit) =>
     snippet: g.selector,
   }));
 
+/**
+ * `--ux-audit auto`: com UI alterada e sem auditoria deste commit, descobre o preview e audita antes de avaliar.
+ * Quando não dá (sem preview, sem navegador), devolve o motivo para o relatório em vez de falhar o review.
+ */
+const autoUxAudit = async ({ run, targetDir, ux, head, options }) => {
+  let url = typeof ux.baseUrl === 'string' && ux.baseUrl !== 'auto' ? ux.baseUrl : null;
+  if (!url) {
+    const found = attempt(() => discoverPreviewUrl(run, head));
+    if (!found.ok) return { note: `ux-audit automático não rodou: falha ao consultar os deployments do GitHub (${found.error}).` };
+    if (!found.value) return { note: 'ux-audit automático não rodou: nenhum preview publicado para este commit. Rode `agent-standards ux-audit --url <url>`.' };
+    url = found.value.url;
+  }
+  try {
+    const config = resolveAuditConfig(ux, { url, routes: options.uxRoutes });
+    await (options.uxAuditRunner ?? runUxAudit)({ target: targetDir, config, env: options.env ?? process.env });
+    return { url };
+  } catch (err) {
+    if (err instanceof UxAuditError || err instanceof UxConfigError) return { note: `ux-audit automático não rodou: ${err.message}` };
+    throw err;
+  }
+};
+
 const decideStatus = ({ problems, divergences, requirements, ci, notes, hasRules, unverified }) => {
   if (problems.length > 0) return 'INCONCLUSIVE';
   if (divergences.some((d) => d.severity === 'hard') || ci.failed.length > 0 || ci.timedOut.length > 0) return 'NEEDS_CHANGES';
@@ -179,6 +203,9 @@ export const runCodeReview = async (userOptions = {}) => {
   let files = new Map();
   let divergences = [];
   let uxAudit = { state: 'disabled' };
+  const profileName = options.profile ?? process.env.AGENT_STANDARDS_PROFILE;
+  const profile = attempt(() => loadProfile(profileName, targetDir));
+  if (!profile.ok) problems.push(profile.error);
 
   const branch = attempt(() => run('git', ['rev-parse', '--abbrev-ref', 'HEAD']).trim()).value ?? '';
   const refs = attempt(() => {
@@ -199,10 +226,15 @@ export const runCodeReview = async (userOptions = {}) => {
     else files = parseAddedLines(diff.value);
     try {
       const loaded = loadConfig(run, mergeBase, head);
-      config = loaded.config;
+      config = applyProfile(loaded.config, profile.value);
       notes.push(...loaded.notes);
       divergences = collectFindings(run, files, config, head, problems);
       uxAudit = loadUxAudit(targetDir, config, files, head);
+      if (options.uxAudit === 'auto' && ['missing', 'outdated', 'invalid'].includes(uxAudit.state)) {
+        const ran = await autoUxAudit({ run, targetDir, ux: config.ux, head, options });
+        if (ran.note) notes.push(ran.note);
+        else uxAudit = { ...loadUxAudit(targetDir, config, files, head), url: ran.url };
+      }
       if (UX_NOTES[uxAudit.state]) notes.push(UX_NOTES[uxAudit.state](uxAudit));
       divergences.push(...uxDivergences(uxAudit));
     } catch (err) {
@@ -234,7 +266,8 @@ export const runCodeReview = async (userOptions = {}) => {
     problems,
     notes,
     ci,
-    uxAudit: { state: uxAudit.state, report: uxAudit.report ?? null, summary: uxAudit.summary ?? null },
+    uxAudit: { state: uxAudit.state, report: uxAudit.report ?? null, summary: uxAudit.summary ?? null, url: uxAudit.url ?? null },
+    profile: profile.value?.name ?? null,
   };
   const reportPath = resolve(targetDir, options.output);
   writeFileSync(reportPath, renderReport(result), 'utf-8');
