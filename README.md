@@ -178,6 +178,21 @@ O `review` não gera mais `review-fixes.patch`, porque o patch não era aplicáv
 
 ---
 
+## 🌐 Perfis Globais (regras gerais para muitos repositórios)
+
+Configurar repositório por repositório não escala. Um **perfil** reúne as regras gerais num lugar só (`profiles/` deste pacote) e vale para qualquer repo, com ou sem `agent.config.json`:
+
+```bash
+npx @apenasgabs/agent-standards review --profile kraken --ux-audit auto
+# ou: AGENT_STANDARDS_PROFILE=kraken npx @apenasgabs/agent-standards review
+```
+
+Precedência: **perfil < regras deduzidas da documentação < `agent.config.json` da branch base**. Regra deduzida como `false` (a doc só não menciona) não desliga o perfil; só o `agent.config.json` desliga, inclusive o gate de UX com `"ux": false`.
+
+O perfil `kraken` liga o Eixo UX inteiro (regras estáticas + gate renderizado com `baseUrl`, `themes` e `login` em `"auto"`), bloqueio de segredos e de `catch` vazio. Estilo de código (arrow functions, `any`) continua vindo de cada repositório. Mudar uma regra geral é um PR aqui; todos os repos passam a segui-la.
+
+---
+
 ## 🎨 Eixo UX
 
 Interface ruim raramente aparece no diff: ela aparece na tela. O Eixo UX tem três camadas.
@@ -237,6 +252,18 @@ Saída em `.ux-review/` (adicione ao `.gitignore`): `UX_AUDIT.md`, `ux-report.js
 | 0 | Sem achado grave (pode haver 🟡 para o revisor avaliar) |
 | 1 | Há achado 🔴 |
 | 2 | A auditoria não rodou (config, conexão, login) |
+
+### Descoberta automática (sem configuração por projeto)
+
+| Valor `"auto"` | Como funciona |
+|---|---|
+| `baseUrl` | Usa o preview publicado para o commit (deployments do GitHub, ex.: Vercel). Sem preview, informe `--url` |
+| `themes` | `light` e `dark` aplicando ao mesmo tempo `prefers-color-scheme`, `data-theme`, classe `dark` do `<html>` e `localStorage.theme`. Se os dois renderizam o mesmo fundo, o audit acusa 🟡 `ux-theme-not-applied` em vez de fingir cobertura |
+| `login` | Com `UX_AUDIT_EMAIL` e `UX_AUDIT_PASSWORD` no ambiente, acha o formulário pelo campo de senha, entra e reaproveita a sessão. Sem credenciais, rotas com login geram 🟡 `ux-login-required` |
+
+Preview protegido da Vercel: defina `VERCEL_AUTOMATION_BYPASS_SECRET` e o audit envia o header de bypass. Cores em `oklch()`/`lab()` (Tailwind v4, daisyUI 5) são convertidas pelo navegador antes do cálculo de contraste.
+
+`review --ux-audit auto` roda o `ux-audit` sozinho quando o diff toca UI e não há auditoria do commit; sem preview ou navegador, registra o motivo no relatório (o status fica 🟡, nunca 🟢).
 
 ### 3. Gate no `review` e revisor de UX
 
