@@ -29,12 +29,12 @@ const execCommand = (command, args, cwd) =>
 export const evaluateCIPipeline = (statusCheckRollup = []) => {
   const checks = statusCheckRollup ?? [];
   if (checks.length === 0) {
-    return { configured: false, status: 'NO_CHECKS', total: 0, successful: 0, failed: [], timedOut: [], inProgress: [] };
+    return { configured: false, status: 'NO_CHECKS', total: 0, successful: 0, passed: [], failed: [], timedOut: [], inProgress: [] };
   }
   const is = (...values) => (c) => values.includes(c.conclusion) || values.includes(c.state);
   const failed = checks.filter(is('FAILURE', 'ERROR', 'ACTION_REQUIRED', 'CANCELLED', 'STARTUP_FAILURE', 'STALE'));
   const timedOut = checks.filter(is('TIMED_OUT'));
-  const successful = checks.filter(is('SUCCESS'));
+  const passed = checks.filter(is('SUCCESS'));
   const settled = (c) => failed.includes(c) || timedOut.includes(c) || is('SUCCESS', 'NEUTRAL', 'SKIPPED')(c);
   const inProgress = checks.filter((c) => !settled(c));
 
@@ -43,7 +43,7 @@ export const evaluateCIPipeline = (statusCheckRollup = []) => {
   else if (timedOut.length > 0) status = 'TIMED_OUT';
   else if (inProgress.length > 0) status = 'IN_PROGRESS';
 
-  return { configured: true, status, total: checks.length, successful: successful.length, failed, timedOut, inProgress };
+  return { configured: true, status, total: checks.length, successful: passed.length, passed, failed, timedOut, inProgress };
 };
 
 const attempt = (fn) => {
@@ -127,11 +127,14 @@ const collectFindings = (run, files, config, head, problems) => {
 };
 
 const loadCI = (run, branch, headSha) => {
-  const res = attempt(() => JSON.parse(run('gh', ['pr', 'view', branch, '--json', 'number,statusCheckRollup,url,headRefOid,state'])));
+  const args = ['pr', 'view', ...(branch && branch !== 'HEAD' ? [branch] : []), '--json', 'number,statusCheckRollup,url,headRefOid,state'];
+  const res = attempt(() => JSON.parse(run('gh', args)));
   if (!res.ok || res.value.state !== 'OPEN') return evaluateCIPipeline([]);
   const ci = { ...evaluateCIPipeline(res.value.statusCheckRollup), prNumber: res.value.number, prUrl: res.value.url };
   // Checks de outro commit não dizem nada sobre o código avaliado.
-  return res.value.headRefOid === headSha ? ci : { ...ci, status: 'OUTDATED', failed: [], timedOut: [] };
+  return res.value.headRefOid === headSha
+    ? ci
+    : { ...ci, status: 'OUTDATED', successful: 0, passed: [], failed: [], timedOut: [], inProgress: [], outdatedSha: res.value.headRefOid };
 };
 
 /**
