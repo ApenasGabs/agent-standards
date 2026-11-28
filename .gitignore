@@ -8,3 +8,4 @@ REVIEW_REPORT.md
 .env
 .env.local
 .agents/
+.ux-review/
