@@ -6,10 +6,11 @@ const LABELS = {
 };
 
 const CI_LABELS = {
-  SUCCESS: '🟢 Passando',
-  FAILURE: '🔴 Falhando',
-  TIMED_OUT: '🔴 Tempo excedido',
-  IN_PROGRESS: '🟡 Em execução',
+  SUCCESS: '🟢 Passing',
+  FAILURE: '🔴 Failing',
+  TIMED_OUT: '🔴 Timed Out',
+  IN_PROGRESS: '🟡 In Progress',
+  OUTDATED: '🟡 Outdated',
   NO_CHECKS: '⚪ Sem checks',
 };
 
@@ -34,7 +35,62 @@ const uxAuditLine = (a = { state: 'disabled' }) =>
     ? `Auditoria renderizada${a.url ? ` de ${a.url}` : ''}: \`${a.report}\` — ${a.summary?.combinations ?? 0} combinação(ões), 🔴 ${a.summary?.hard ?? 0} · 🟡 ${a.summary?.medium ?? 0}. Screenshots em \`${a.report.replace(/[^/]+$/, '')}\`.`
     : UX_AUDIT_LABELS[a.state];
 
+const formatPrRef = (ci) => (ci.prNumber ? (ci.prUrl ? `[PR #${ci.prNumber}](${ci.prUrl})` : `PR #${ci.prNumber}`) : '');
+
+const ciSummaryDetails = (ci = {}) => {
+  const prRef = formatPrRef(ci);
+  const suffix = prRef ? ` no ${prRef}` : '';
+  const total = ci.total ?? 0;
+  const successful = ci.successful ?? 0;
+  if (ci.status === 'SUCCESS') return `${successful}/${total} check(s) aprovado(s)${suffix}`;
+  if (ci.status === 'FAILURE') return `${ci.failed?.length ?? 0} check(s) falhando (${successful}/${total} aprovado(s))${suffix}`;
+  if (ci.status === 'TIMED_OUT') return `${ci.timedOut?.length ?? 0} check(s) com tempo excedido (${successful}/${total} aprovado(s))${suffix}`;
+  if (ci.status === 'IN_PROGRESS') return `${ci.inProgress?.length ?? 0} check(s) em execução (${successful}/${total} aprovado(s))${suffix}`;
+  if (ci.status === 'OUTDATED') return `Checks de outro commit${ci.outdatedSha ? ` (${String(ci.outdatedSha).slice(0, 7)})` : ''}${suffix}`;
+  return 'Nenhum check remoto registrado';
+};
+
+const formatCheckItem = (icon, check) => {
+  const name = check.name ?? check.context ?? 'Check';
+  const workflow = check.workflowName ? ` (${check.workflowName})` : '';
+  const url = check.detailsUrl ?? check.targetUrl ?? '';
+  const link = url ? ` — [Ver detalhes](${url})` : '';
+  return `- ${icon} **${name}**${workflow}${link}`;
+};
+
+const renderCISection = (ci = {}) => {
+  const prRef = formatPrRef(ci);
+  const label = CI_LABELS[ci.status] ?? ci.status;
+  const lines = [`${label}${prRef ? ` — ${prRef}` : ''}`];
+  const blocking = [...(ci.failed ?? []), ...(ci.timedOut ?? [])];
+  const inProgress = ci.inProgress ?? [];
+  const passed = ci.passed ?? [];
+  const successful = ci.successful ?? passed.length;
+  const total = ci.total ?? 0;
+
+  if (ci.status === 'OUTDATED') {
+    lines.push('', `Os checks remotos do PR pertencem a outro commit${ci.outdatedSha ? ` (\`${String(ci.outdatedSha).slice(0, 7)}\`)` : ''} e não validam o commit avaliado.`);
+    return lines;
+  }
+  if (!ci.configured) {
+    lines.push('', 'Nenhum check remoto configurado ou PR aberto encontrado para esta branch.');
+    return lines;
+  }
+  if (blocking.length > 0) {
+    lines.push('', '### Checks reprovados', '', ...blocking.map((c) => formatCheckItem('🔴', c)));
+  }
+  if (inProgress.length > 0) {
+    lines.push('', '### Checks em execução', '', ...inProgress.map((c) => formatCheckItem('🟡', c)));
+  }
+  if (successful > 0) {
+    lines.push('', '### Jobs aprovados', '', `✅ **${successful} de ${total}** job(s) aprovado(s)${prRef ? ` no ${prRef}` : ''}.`);
+    if (passed.length > 0) lines.push('', ...passed.map((c) => formatCheckItem('🟢', c)));
+  }
+  return lines;
+};
+
 export const renderReport = (r) => {
+  const ci = r.ci ?? { status: 'NO_CHECKS' };
   const standards = r.divergences.filter((d) => d.axis !== 'UX').map(formatDivergence);
   const ux = r.divergences.filter((d) => d.axis === 'UX').map(formatDivergence);
   const spec = r.requirements.map((q) =>
@@ -50,6 +106,13 @@ export const renderReport = (r) => {
     `> **Tarefa**: ${r.task.title} (${r.task.source})  `,
     `> **Comparação**: ${r.base} … ${r.head}  `,
     `> **Regras**: ${r.ruleSource}`,
+    '',
+    '## Resumo Executivo',
+    '',
+    '| Eixo / Métrica | Status | Detalhes |',
+    '| :--- | :--- | :--- |',
+    `| **Status Geral** | ${LABELS[r.status]} | ${r.divergences.length} divergência(s), ${r.problems.length} problema(s) |`,
+    `| **Pipeline CI/CD** | ${CI_LABELS[ci.status] ?? ci.status} | ${ciSummaryDetails(ci)} |`,
     '',
     ...(r.problems.length > 0 ? ['## Motivos da revisão inconclusiva', '', list(r.problems.map((p) => `- ${p}`)), ''] : []),
     '## Eixo Spec',
@@ -76,8 +139,7 @@ export const renderReport = (r) => {
     '',
     '## Pipeline de CI/CD',
     '',
-    `${CI_LABELS[r.ci.status] ?? r.ci.status}${r.ci.prNumber ? ` — PR #${r.ci.prNumber}` : ''}`,
-    ...[...(r.ci.failed ?? []), ...(r.ci.timedOut ?? [])].map((c) => `- 🔴 ${c.name ?? c.context}: ${c.detailsUrl ?? c.targetUrl ?? ''}`),
+    ...renderCISection(ci),
     '',
     ...(r.notes.length > 0 ? ['## Observações', '', list(r.notes.map((n) => `- ${n}`)), ''] : []),
   ].join('\n');
