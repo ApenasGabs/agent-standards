@@ -1,12 +1,14 @@
 import { execFileSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
-import { basename, resolve } from 'node:path';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { basename, relative, resolve } from 'node:path';
 import process from 'node:process';
 import { ConfigError, configFromDocs, parseConfig, rulesForFile } from './review/config.mjs';
 import { parseAddedLines } from './review/diff.mjs';
 import { renderReport } from './review/report.mjs';
-import { checkFile, isRuleEnabled, isSourceFile, isTestFile } from './review/rules.mjs';
+import { checkFile, isRuleEnabled, isSourceFile, isTestFile, isUiFile } from './review/rules.mjs';
 import { extractRequirements, matchRequirements } from './review/spec.mjs';
+import { UX_REPORT_FILE } from './ux/audit.mjs';
+import { groupFindings } from './ux/report.mjs';
 
 const DOC_FILES = ['AGENTS.md', 'CLAUDE.md', '.github/copilot-instructions.md', 'CODING_STANDARDS.md'];
 
@@ -118,6 +120,41 @@ const loadCI = (run, branch, headSha) => {
   return res.value.headRefOid === headSha ? ci : { ...ci, status: 'OUTDATED', failed: [], timedOut: [] };
 };
 
+/**
+ * Eixo UX renderizado: com a seção `ux` na config da base, mudança de UI só passa com
+ * auditoria (`agent-standards ux-audit`) do mesmo commit.
+ */
+const loadUxAudit = (targetDir, config, files, headSha) => {
+  if (!config.ux) return { state: 'disabled' };
+  const uiFiles = [...files.keys()].filter(isUiFile);
+  if (uiFiles.length === 0) return { state: 'not-required' };
+  const path = resolve(targetDir, typeof config.ux.outDir === 'string' ? config.ux.outDir : '.ux-review', UX_REPORT_FILE);
+  const report = relative(targetDir, path);
+  if (!existsSync(path)) return { state: 'missing', uiFiles: uiFiles.length, report };
+  const parsed = attempt(() => JSON.parse(readFileSync(path, 'utf-8')));
+  if (!parsed.ok || !Array.isArray(parsed.value?.matrix)) return { state: 'invalid', uiFiles: uiFiles.length, report };
+  if (parsed.value.head !== headSha) return { state: 'outdated', uiFiles: uiFiles.length, report, auditedHead: parsed.value.head };
+  return { state: 'ok', uiFiles: uiFiles.length, report, summary: parsed.value.summary, groups: groupFindings(parsed.value.matrix) };
+};
+
+const UX_NOTES = {
+  missing: (a) => `A mudança altera ${a.uiFiles} arquivo(s) de UI e não há auditoria renderizada deste commit: rode \`agent-standards ux-audit\` e revise os screenshots.`,
+  outdated: (a) => `A auditoria renderizada em \`${a.report}\` é de outro commit (${String(a.auditedHead).slice(0, 7)}); rode \`agent-standards ux-audit\` de novo.`,
+  invalid: (a) => `\`${a.report}\` não é um relatório válido do ux-audit; rode \`agent-standards ux-audit\` de novo.`,
+};
+
+const uxDivergences = (audit) =>
+  (audit.groups ?? []).map((g) => ({
+    axis: 'UX',
+    ruleId: g.ruleId,
+    severity: g.severity,
+    file: `render ${g.where[0]}${g.where.length > 1 ? ` (+${g.where.length - 1})` : ''}`,
+    line: null,
+    docRef: 'ux-audit',
+    description: g.description,
+    snippet: g.selector,
+  }));
+
 const decideStatus = ({ problems, divergences, requirements, ci, notes, hasRules, unverified }) => {
   if (problems.length > 0) return 'INCONCLUSIVE';
   if (divergences.some((d) => d.severity === 'hard') || ci.failed.length > 0 || ci.timedOut.length > 0) return 'NEEDS_CHANGES';
@@ -141,6 +178,7 @@ export const runCodeReview = async (userOptions = {}) => {
   let config = configFromDocs([]);
   let files = new Map();
   let divergences = [];
+  let uxAudit = { state: 'disabled' };
 
   const branch = attempt(() => run('git', ['rev-parse', '--abbrev-ref', 'HEAD']).trim()).value ?? '';
   const refs = attempt(() => {
@@ -164,6 +202,9 @@ export const runCodeReview = async (userOptions = {}) => {
       config = loaded.config;
       notes.push(...loaded.notes);
       divergences = collectFindings(run, files, config, head, problems);
+      uxAudit = loadUxAudit(targetDir, config, files, head);
+      if (UX_NOTES[uxAudit.state]) notes.push(UX_NOTES[uxAudit.state](uxAudit));
+      divergences.push(...uxDivergences(uxAudit));
     } catch (err) {
       if (!(err instanceof ConfigError)) throw err;
       problems.push(err.message);
@@ -193,6 +234,7 @@ export const runCodeReview = async (userOptions = {}) => {
     problems,
     notes,
     ci,
+    uxAudit: { state: uxAudit.state, report: uxAudit.report ?? null, summary: uxAudit.summary ?? null },
   };
   const reportPath = resolve(targetDir, options.output);
   writeFileSync(reportPath, renderReport(result), 'utf-8');

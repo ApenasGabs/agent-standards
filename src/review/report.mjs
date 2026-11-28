@@ -17,12 +17,26 @@ export const statusLabel = (status) => LABELS[status];
 
 const list = (items, empty) => (items.length > 0 ? items.join('\n') : empty);
 
+const UX_AUDIT_LABELS = {
+  disabled: 'Auditoria renderizada desativada (sem seção `ux` no agent.config.json da base).',
+  'not-required': 'Nenhum arquivo de UI alterado: auditoria renderizada não exigida.',
+  missing: '🟡 Mudança de UI sem auditoria renderizada deste commit (`agent-standards ux-audit`).',
+  outdated: '🟡 Auditoria renderizada desatualizada (outro commit).',
+  invalid: '🟡 Relatório do ux-audit inválido.',
+};
+
+const formatDivergence = (d) =>
+  `- ${d.severity === 'hard' ? '🔴' : '🟡'} \`${d.line ? `${d.file}:${d.line}` : d.file}\` — **${d.ruleId}** (${d.docRef}): ${d.description}` +
+  (d.snippet ? `\n\n  ~~~~text\n  ${d.snippet}\n  ~~~~\n` : '');
+
+const uxAuditLine = (a = { state: 'disabled' }) =>
+  a.state === 'ok'
+    ? `Auditoria renderizada: \`${a.report}\` — ${a.summary?.combinations ?? 0} combinação(ões), 🔴 ${a.summary?.hard ?? 0} · 🟡 ${a.summary?.medium ?? 0}. Screenshots em \`${a.report.replace(/[^/]+$/, '')}\`.`
+    : UX_AUDIT_LABELS[a.state];
+
 export const renderReport = (r) => {
-  const standards = r.divergences.map(
-    (d) =>
-      `- ${d.severity === 'hard' ? '🔴' : '🟡'} \`${d.file}:${d.line}\` — **${d.ruleId}** (${d.docRef}): ${d.description}` +
-      (d.snippet ? `\n\n  ~~~~text\n  ${d.snippet}\n  ~~~~\n` : '')
-  );
+  const standards = r.divergences.filter((d) => d.axis !== 'UX').map(formatDivergence);
+  const ux = r.divergences.filter((d) => d.axis === 'UX').map(formatDivergence);
   const spec = r.requirements.map((q) =>
     q.status === 'evidence'
       ? `- 🔎 ${q.text} — evidência em ${q.evidence.map((e) => `\`${e}\``).join(', ')}`
@@ -51,6 +65,14 @@ export const renderReport = (r) => {
     '### Regras não verificadas',
     '',
     list(r.unverified.map((u) => `- \`${u}\``), 'Nenhuma.'),
+    '',
+    '## Eixo UX',
+    '',
+    uxAuditLine(r.uxAudit),
+    '',
+    list(ux, 'Nenhum achado de UX nas regras verificadas.'),
+    '',
+    '> O revisor de UX (skill `ux-reviewer`) ainda avalia hierarquia, slop visual, microcopy e fluxo nos screenshots.',
     '',
     '## Pipeline de CI/CD',
     '',
