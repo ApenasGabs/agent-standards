@@ -7,15 +7,21 @@
  *   agent-standards init       Auto-descobre padrões do repositório, gera agent.config.json e compila docs
  *   agent-standards discover   Apenas analisa e exibe o perfil detectado do repositório
  *   agent-standards sync       Recompila AGENTS.md, CLAUDE.md, .cursorrules a partir de agent.config.json
- *   agent-standards review     Executa o Code Review de dois eixos (Spec & Standards)
+ *   agent-standards review     Executa o Code Review (Spec, Standards, UX e CI)
+ *   agent-standards ux-audit   Audita a UI renderizada (rotas × temas × viewports) via navegador remoto
  */
 
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import process from 'node:process';
 import { parseArgs } from 'node:util';
 import { discoverRepoStandards, writeConfigFile } from '../src/discover.mjs';
 import { statusLabel } from '../src/review/report.mjs';
 import { runCodeReview } from '../src/review.mjs';
 import { syncAgentDocs } from '../src/sync.mjs';
+import { ConfigError, parseConfig } from '../src/review/config.mjs';
+import { runUxAudit, UxAuditError } from '../src/ux/audit.mjs';
+import { resolveAuditConfig, UxConfigError } from '../src/ux/config.mjs';
 
 const printHelp = () => {
   console.log(`
@@ -28,7 +34,8 @@ Comandos:
   init        Inspeciona o repositório atual, cria agent.config.json e compila os arquivos de agentes
   discover    Analisa o repositório e exibe o perfil técnico identificado
   sync        Sincroniza AGENTS.md, CLAUDE.md, .cursorrules e copilot-instructions
-  review      Executa auditoria de Spec & Standards no diff da branch atual
+  review      Executa auditoria de Spec, Standards e UX no diff da branch atual
+  ux-audit    Renderiza a UI (rotas × temas × viewports) e mede overflow, contraste, alvos de toque e erros
 
 Códigos de saída de 'review': 0 sem bloqueio, 1 reprovado, 2 inconclusivo
 
@@ -43,10 +50,21 @@ Opções para 'review':
   --json          Imprime o resultado em JSON
   --target <dir>  Diretório alvo a ser inspecionado (padrão: diretório atual)
 
+Opções para 'ux-audit' (padrões vêm da seção "ux" do agent.config.json):
+  --url <url>       URL base do app, acessível a partir do navegador remoto
+  --routes <a,b>    Rotas a auditar (ex.: /list,/stock)
+  --themes <a,b>    Restringe aos temas informados
+  --config <path>   Arquivo JSON alternativo com a seção "ux"
+  --out <dir>       Pasta de saída (padrão: .ux-review)
+  --local           Usa Chromium local em vez de BROWSERLESS_HOST/BROWSERLESS_TOKEN
+  --json            Imprime o resultado em JSON
+  Códigos de saída: 0 sem bloqueio, 1 achado grave, 2 erro de configuração/conexão
+
 Exemplos:
   npx @apenasgabs/agent-standards init
   npx @apenasgabs/agent-standards sync
   npx @apenasgabs/agent-standards review --base origin/main
+  BROWSERLESS_HOST=host:9222 BROWSERLESS_TOKEN=*** npx @apenasgabs/agent-standards ux-audit --url http://host:5173
 `);
 };
 
@@ -125,6 +143,34 @@ const main = async () => {
     }
     if (res.status === 'NEEDS_CHANGES') process.exitCode = 1;
     if (res.status === 'INCONCLUSIVE') process.exitCode = 2;
+    return;
+  }
+
+  if (command === 'ux-audit') {
+    const names = ['url', 'routes', 'themes', 'config', 'out', 'target'];
+    const { values } = parseArgs({
+      args: args.slice(1),
+      options: { ...Object.fromEntries(names.map((n) => [n, { type: 'string' }])), local: { type: 'boolean' }, json: { type: 'boolean' } },
+    });
+    const target = resolve(values.target ?? cwd);
+    const split = (v) => (v ? v.split(',').map((x) => x.trim()).filter(Boolean) : undefined);
+    try {
+      const configPath = resolve(target, values.config ?? 'agent.config.json');
+      const section = existsSync(configPath) ? parseConfig(readFileSync(configPath, 'utf-8')).ux : null;
+      const config = resolveAuditConfig(section, { url: values.url, routes: split(values.routes), themes: split(values.themes), out: values.out });
+      if (!values.json) console.log(`🎨 [agent-standards] Auditando ${config.routes.length} rota(s) × ${config.themes.length} tema(s) × ${config.viewports.length} viewport(s) em ${config.baseUrl}...`);
+      const res = await runUxAudit({ target, config, local: values.local });
+      if (values.json) console.log(JSON.stringify(res, null, 2));
+      else {
+        console.log(`\n🏁 ${res.summary.combinations} combinação(ões): 🔴 ${res.summary.hard} grave(s) · 🟡 ${res.summary.medium} ressalva(s)`);
+        console.log(`📄 Relatório: ${res.markdownPath}`);
+      }
+      if (res.summary.hard > 0) process.exitCode = 1;
+    } catch (err) {
+      if (!(err instanceof UxConfigError || err instanceof UxAuditError || err instanceof ConfigError)) throw err;
+      console.error(`❌ ${err.message}`);
+      process.exitCode = 2;
+    }
     return;
   }
 
