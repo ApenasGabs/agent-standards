@@ -20,3 +20,28 @@ jobs:
         run: node bin/agent-standards.mjs discover
       - name: Run Unit Tests
         run: npm test
+
+  # O revisor da base avalia o código do PR: uma mudança no revisor não consegue se aprovar.
+  review-with-base:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Prepare base reviewer worktree
+        run: git worktree add --detach "$RUNNER_TEMP/base-reviewer" "$BASE_SHA"
+      - name: Review PR with base reviewer
+        working-directory: ${{ runner.temp }}/base-reviewer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node bin/agent-standards.mjs review --base "$BASE_SHA" --head "$HEAD_SHA"
+      - name: Publish review report
+        if: always()
+        run: cat "$RUNNER_TEMP/base-reviewer/REVIEW_REPORT.md" >> "$GITHUB_STEP_SUMMARY" || true

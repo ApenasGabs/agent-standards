@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import process from 'node:process';
 import test from 'node:test';
 import { runUxAudit, UxAuditError } from '../src/ux/audit.mjs';
 import { collectPageMetrics } from '../src/ux/collect.mjs';
@@ -185,4 +187,15 @@ test('audit: queda da conexão falha alto em vez de sair em silêncio', async (t
     return new Promise(() => {});
   };
   await assert.rejects(runUxAudit({ target: dir, config, browser }), (err) => err instanceof UxAuditError && /perdeu a conexão/.test(err.message));
+});
+
+test('cli: progresso do ux-audit vai para stderr e o stdout fica só com o resultado', (t) => {
+  const dir = tmp(t);
+  const cli = join(import.meta.dirname ?? dirname(new URL(import.meta.url).pathname), '../bin/agent-standards.mjs');
+  const env = { ...process.env };
+  for (const key of ['BROWSERLESS_HOST', 'BROWSERLESS_TOKEN', 'AGENT_STANDARDS_CDP_URL']) delete env[key];
+  const res = spawnSync(process.execPath, [cli, 'ux-audit', '--target', dir, '--url', 'http://127.0.0.1:1', '--routes', '/', '--json'], { encoding: 'utf-8', env });
+  assert.equal(res.status, 2, res.stderr);
+  assert.match(res.stderr, /Auditando 1 rota/);
+  assert.doesNotMatch(res.stdout, /Auditando/);
 });

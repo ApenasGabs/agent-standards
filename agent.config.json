@@ -29,6 +29,16 @@
       "blockEmptyCatch": true
     }
   },
+  "overrides": [
+    {
+      "paths": ["bin/**"],
+      "rules": {
+        "cleanCode": {
+          "blockConsoleLog": false
+        }
+      }
+    }
+  ],
   "docsSync": [
     "AGENTS.md",
     "CLAUDE.md",
