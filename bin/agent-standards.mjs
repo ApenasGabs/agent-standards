@@ -200,7 +200,8 @@ const main = async () => {
         }
       }
       const config = resolveAuditConfig(section, { url, routes: split(values.routes), themes: split(values.themes), out: values.out });
-      if (!values.json) console.log(`🎨 [agent-standards] Auditando ${config.routes.length} rota(s) × ${config.themes.length} tema(s) × ${config.viewports.length} viewport(s) em ${config.baseUrl}...`);
+      // Progresso vai para stderr: stdout fica só com o resultado (`ux-audit --json | jq` funciona).
+      console.error(`🎨 [agent-standards] Auditando ${config.routes.length} rota(s) × ${config.themes.length} tema(s) × ${config.viewports.length} viewport(s) em ${config.baseUrl}...`);
       const res = await runUxAudit({ target, config, local: values.local });
       if (values.json) console.log(JSON.stringify(res, null, 2));
       else {
