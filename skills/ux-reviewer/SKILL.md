@@ -27,8 +27,8 @@ nunca aprova o próprio design.
 ### 2. Renderizar (mecânico, determinístico)
 ```bash
 # Navegador remoto: BROWSERLESS_HOST e BROWSERLESS_TOKEN no ambiente (protocolo Playwright, não CDP).
-# Login: variáveis citadas em ux.login.fields no agent.config.json.
-npx @apenasgabs/agent-standards ux-audit --routes /rota-afetada,/outra
+# Login automático: UX_AUDIT_EMAIL e UX_AUDIT_PASSWORD no ambiente. URL: preview do commit (ou --url).
+npx @apenasgabs/agent-standards ux-audit --profile kraken --routes /rota-afetada,/outra
 ```
 - Saída em `.ux-review/`: `UX_AUDIT.md`, `ux-report.json` e um PNG por rota × tema × viewport.
 - Código 2 = a auditoria não rodou (conexão, login, config). **Isso não é aprovação**: resolva ou reporte.
@@ -113,30 +113,15 @@ Peça que toda issue com impacto visual traga este bloco; o Eixo Spec do review 
 - Acessibilidade: <foco, nomes acessíveis, atalhos>
 ```
 
-## Configuração do projeto (`agent.config.json`)
+## Configuração
 
-```json
-{
-  "rules": {
-    "ux": { "blockImportant": true, "blockHardcodedColors": true, "blockSlopPatterns": true, "blockEmojiInUi": true, "requireAccessibleIconButton": true }
-  },
-  "overrides": [{ "paths": ["src/styles/tokens.css"], "rules": { "ux": { "blockHardcodedColors": false } } }],
-  "ux": {
-    "baseUrl": "https://app.exemplo.dev",
-    "routes": ["/"],
-    "themes": [
-      { "name": "light", "localStorage": { "theme": "light" }, "attributes": { "data-theme": "light" }, "colorScheme": "light" },
-      { "name": "dark", "localStorage": { "theme": "dark" }, "attributes": { "data-theme": "dark" }, "colorScheme": "dark" }
-    ],
-    "login": {
-      "path": "/login",
-      "fields": { "[data-testid=login-email]": "UX_AUDIT_EMAIL", "[data-testid=login-password]": "UX_AUDIT_PASSWORD" },
-      "submit": "[data-testid=login-submit]",
-      "waitFor": "[data-testid=app-shell]"
-    }
-  }
-}
+Não configure repositório por repositório. As regras gerais vêm do perfil `kraken` do agent-standards:
+
+```bash
+npx @apenasgabs/agent-standards review --profile kraken --ux-audit auto --ux-routes /rota-afetada
 ```
 
-Com a seção `ux` na config da branch base, o review deixa pendente toda mudança de UI sem `ux-audit` do mesmo commit.
-Adicione `.ux-review/` ao `.gitignore`.
+- URL: preview publicado do commit (ou `--url`); temas `light`/`dark` genéricos; login automático com `UX_AUDIT_EMAIL`/`UX_AUDIT_PASSWORD`.
+- Se o relatório trouxer `ux-theme-not-applied` ou `ux-login-required`, a cobertura está incompleta: diga isso no parecer em vez de aprovar.
+- Só use `agent.config.json` no projeto para exceções reais (ex.: tema guardado em outra chave), ou `"ux": false` para repositórios sem interface web.
+- Adicione `.ux-review/` ao `.gitignore`.

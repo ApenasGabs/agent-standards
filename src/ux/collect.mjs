@@ -74,21 +74,30 @@ export const collectPageMetrics = ({ maxTexts = 400 } = {}) => {
     .filter((img) => isVisible(img) && !img.hasAttribute('alt'))
     .map((img) => ({ selector: describe(img) }));
 
+  // Converte qualquer cor CSS (oklch, lab, color(), hex, nomes) para sRGB pelo próprio navegador:
+  // Tailwind v4/daisyUI 5 entregam oklch() no getComputedStyle, que um parser de rgb() ignoraria.
+  const paint = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+  const toRgba = (value) => {
+    if (!paint || !value) return null;
+    paint.clearRect(0, 0, 1, 1);
+    paint.fillStyle = 'transparent';
+    paint.fillStyle = value;
+    paint.fillRect(0, 0, 1, 1);
+    const [r, g, b, a] = paint.getImageData(0, 0, 1, 1).data;
+    return { r, g, b, a: Math.round((a / 255) * 1000) / 1000 };
+  };
+  const rgbaText = (c) => (c ? `rgba(${c.r}, ${c.g}, ${c.b}, ${c.a})` : null);
+
   // Fundo efetivo: sobe na árvore até achar cor opaca. Imagem/gradiente no caminho torna a medição incerta.
   const effectiveBackground = (el) => {
     const layers = [];
     for (let node = el; node && node.nodeType === 1; node = node.parentElement) {
       const style = getComputedStyle(node);
       if (style.backgroundImage && style.backgroundImage !== 'none') return null;
-      const bg = style.backgroundColor;
-      const m = bg.match(/rgba?\(([^)]+)\)/);
-      if (m) {
-        const parts = m[1].split(/[\s,/]+/).filter(Boolean).map(Number);
-        const alpha = parts.length > 3 ? parts[3] : 1;
-        if (alpha > 0) {
-          layers.push({ r: parts[0], g: parts[1], b: parts[2], a: alpha });
-          if (alpha >= 1) break;
-        }
+      const layer = toRgba(style.backgroundColor);
+      if (layer && layer.a > 0) {
+        layers.push(layer);
+        if (layer.a >= 1) break;
       }
     }
     let base = { r: 255, g: 255, b: 255 };
@@ -117,7 +126,7 @@ export const collectPageMetrics = ({ maxTexts = 400 } = {}) => {
     texts.push({
       selector: describe(el),
       text: text.replace(/\s+/g, ' ').slice(0, 40),
-      color: style.color,
+      color: rgbaText(toRgba(style.color)) ?? style.color,
       background,
       fontSize: parseFloat(style.fontSize),
       fontWeight: style.fontWeight,
@@ -125,6 +134,8 @@ export const collectPageMetrics = ({ maxTexts = 400 } = {}) => {
   }
 
   return {
+    canvas: effectiveBackground(document.body),
+    hasPasswordField: [...document.querySelectorAll('input[type="password"]')].some(isVisible),
     scrollWidth: doc.scrollWidth,
     innerWidth: window.innerWidth,
     widest,
@@ -134,3 +145,41 @@ export const collectPageMetrics = ({ maxTexts = 400 } = {}) => {
     texts,
   };
 };
+
+/**
+ * Login automático: acha o formulário com senha visível e marca usuário, senha e botão com
+ * `data-ux-audit-login` para o audit preencher. Também autocontido (roda via page.evaluate).
+ */
+export const findLoginForm = () => {
+  const visible = (el) => {
+    const rect = el.getBoundingClientRect();
+    const style = getComputedStyle(el);
+    return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+  };
+  const password = [...document.querySelectorAll('input[type="password"]')].find(visible);
+  if (!password) return null;
+  const scope = password.closest('form') || document;
+  const userSelectors = [
+    'input[type="email"]',
+    'input[autocomplete="username"]',
+    'input[autocomplete="email"]',
+    'input[name*="email" i]',
+    'input[name*="user" i]',
+    'input[id*="email" i]',
+    'input[type="text"]',
+  ];
+  let user = null;
+  for (const selector of userSelectors) {
+    user = [...scope.querySelectorAll(selector)].find((el) => el !== password && visible(el)) || null;
+    if (user) break;
+  }
+  const submit = [...scope.querySelectorAll('button[type="submit"], input[type="submit"], button:not([type])')].find(visible) || null;
+  for (const el of document.querySelectorAll('[data-ux-audit-login]')) el.removeAttribute('data-ux-audit-login');
+  password.setAttribute('data-ux-audit-login', 'password');
+  if (user) user.setAttribute('data-ux-audit-login', 'user');
+  if (submit) submit.setAttribute('data-ux-audit-login', 'submit');
+  return { user: Boolean(user), submit: Boolean(submit) };
+};
+
+/** Usado para esperar o login terminar: o campo de senha some quando a sessão entra. */
+export const passwordFieldGone = () => ![...document.querySelectorAll('input[type="password"]')].some((el) => el.offsetParent !== null);

@@ -1,0 +1,21 @@
+{
+  "name": "kraken",
+  "description": "Regras gerais aplicadas pelo Kraken e pelo Paperclip em todos os repositórios. O agent.config.json do projeto só precisa declarar exceções.",
+  "rules": {
+    "security": { "blockHardcodedSecrets": true },
+    "cleanCode": { "blockEmptyCatch": true },
+    "ux": {
+      "blockImportant": true,
+      "blockHardcodedColors": true,
+      "blockSlopPatterns": true,
+      "blockEmojiInUi": true,
+      "requireAccessibleIconButton": true
+    }
+  },
+  "ux": {
+    "baseUrl": "auto",
+    "routes": ["/"],
+    "themes": "auto",
+    "login": "auto"
+  }
+}

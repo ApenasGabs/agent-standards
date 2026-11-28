@@ -28,7 +28,18 @@ export const DEFAULT_VIEWPORTS = [
   { name: 'desktop', width: 1440, height: 900, touch: false },
 ];
 
-const DEFAULT_THEMES = [{ name: 'default' }];
+/**
+ * Temas genéricos: cobrem os mecanismos mais comuns ao mesmo tempo (prefers-color-scheme, daisyUI
+ * `data-theme`, Tailwind `class="dark"` e `localStorage.theme`), sem configuração por projeto.
+ * Se o app usar outro mecanismo, o audit acusa `ux-theme-not-applied` em vez de fingir que testou os dois.
+ */
+export const GENERIC_THEMES = [
+  { name: 'light', colorScheme: 'light', localStorage: { theme: 'light' }, attributes: { 'data-theme': 'light' }, addClass: [], removeClass: ['dark'] },
+  { name: 'dark', colorScheme: 'dark', localStorage: { theme: 'dark' }, attributes: { 'data-theme': 'dark' }, addClass: ['dark'], removeClass: ['light'] },
+];
+
+/** Credenciais do login automático: mesmos nomes em todo repositório. */
+export const AUTO_LOGIN_ENV = { email: 'UX_AUDIT_EMAIL', password: 'UX_AUDIT_PASSWORD' };
 
 const isPlainObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isStringMap = (v) => isPlainObject(v) && Object.values(v).every((x) => typeof x === 'string');
@@ -47,10 +58,22 @@ const normalizeTheme = (theme, i) => {
   for (const key of ['localStorage', 'attributes']) {
     if (theme[key] !== undefined && !isStringMap(theme[key])) throw new UxConfigError(`ux.themes[${i}].${key} deve mapear chaves para textos.`);
   }
+  for (const key of ['addClass', 'removeClass']) {
+    if (theme[key] !== undefined && !(Array.isArray(theme[key]) && theme[key].every((c) => typeof c === 'string' && /^[\w-]+$/.test(c)))) {
+      throw new UxConfigError(`ux.themes[${i}].${key} deve ser uma lista de classes.`);
+    }
+  }
   if (theme.colorScheme !== undefined && !['light', 'dark'].includes(theme.colorScheme)) {
     throw new UxConfigError(`ux.themes[${i}].colorScheme aceita "light" ou "dark".`);
   }
-  return { name: theme.name, localStorage: theme.localStorage ?? {}, attributes: theme.attributes ?? {}, colorScheme: theme.colorScheme ?? null };
+  return {
+    name: theme.name,
+    localStorage: theme.localStorage ?? {},
+    attributes: theme.attributes ?? {},
+    addClass: theme.addClass ?? [],
+    removeClass: theme.removeClass ?? [],
+    colorScheme: theme.colorScheme ?? null,
+  };
 };
 
 const normalizeViewport = (vp, i) => {
@@ -61,11 +84,12 @@ const normalizeViewport = (vp, i) => {
 };
 
 const normalizeLogin = (login) => {
-  if (login === undefined || login === null) return null;
+  if (login === undefined || login === null || login === false) return null;
+  if (login === 'auto') return { auto: true, path: null, fields: null, submit: null, waitFor: null };
   if (!isPlainObject(login) || typeof login.path !== 'string' || typeof login.submit !== 'string' || !isStringMap(login.fields)) {
     throw new UxConfigError('ux.login precisa de path, submit e fields ({ "seletor": "NOME_DA_VARIAVEL" }).');
   }
-  return { path: login.path, fields: login.fields, submit: login.submit, waitFor: typeof login.waitFor === 'string' ? login.waitFor : null };
+  return { auto: false, path: login.path, fields: login.fields, submit: login.submit, waitFor: typeof login.waitFor === 'string' ? login.waitFor : null };
 };
 
 /**
@@ -75,13 +99,19 @@ const normalizeLogin = (login) => {
 export const resolveAuditConfig = (section, cli = {}) => {
   const ux = section ?? {};
   if (!isPlainObject(ux)) throw new UxConfigError('ux deve ser um objeto.');
-  const baseUrl = cli.url ?? ux.baseUrl;
+  const baseUrl = cli.url ?? (ux.baseUrl === 'auto' ? undefined : ux.baseUrl);
   if (typeof baseUrl !== 'string' || !/^https?:\/\//.test(baseUrl)) {
-    throw new UxConfigError('Informe a URL do app (--url ou ux.baseUrl), acessível a partir do navegador remoto.');
+    throw new UxConfigError(
+      ux.baseUrl === 'auto'
+        ? 'Nenhum preview encontrado para este commit (deployments do GitHub). Informe --url com uma URL acessível ao navegador remoto.'
+        : 'Informe a URL do app (--url ou ux.baseUrl), acessível a partir do navegador remoto.'
+    );
   }
   const routes = cli.routes ?? ux.routes ?? ['/'];
   if (!Array.isArray(routes) || routes.length === 0) throw new UxConfigError('ux.routes deve ser uma lista não vazia.');
-  const themes = (ux.themes ?? DEFAULT_THEMES).map(normalizeTheme);
+  const rawThemes = ux.themes === undefined || ux.themes === 'auto' ? GENERIC_THEMES : ux.themes;
+  if (!Array.isArray(rawThemes) || rawThemes.length === 0) throw new UxConfigError('ux.themes deve ser "auto" ou uma lista de temas.');
+  const themes = rawThemes.map(normalizeTheme);
   const selectedThemes = cli.themes ? themes.filter((t) => cli.themes.includes(t.name)) : themes;
   if (selectedThemes.length === 0) throw new UxConfigError(`Nenhum tema corresponde a --themes ${cli.themes?.join(',')}.`);
   const minTapTarget = ux.minTapTarget ?? 44;

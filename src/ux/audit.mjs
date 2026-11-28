@@ -3,9 +3,9 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { delimiter, join, relative, resolve } from 'node:path';
 import process from 'node:process';
-import { collectPageMetrics } from './collect.mjs';
-import { resolveBrowserEndpoint } from './config.mjs';
-import { evaluateMetrics, evaluateRuntime, summarize } from './evaluate.mjs';
+import { collectPageMetrics, findLoginForm, passwordFieldGone } from './collect.mjs';
+import { AUTO_LOGIN_ENV, resolveBrowserEndpoint } from './config.mjs';
+import { evaluateMetrics, evaluateRuntime, markThemesNotApplied, summarize } from './evaluate.mjs';
 import { renderUxAudit } from './report.mjs';
 
 export class UxAuditError extends Error {}
@@ -72,7 +72,7 @@ const openBrowser = async (playwright, { endpoint, local }) => {
 };
 
 /** Executado na página antes dos scripts do app. */
-const applyTheme = ({ storage, attributes }) => {
+const applyTheme = ({ storage, attributes, addClass, removeClass }) => {
   try {
     for (const [key, value] of Object.entries(storage)) window.localStorage.setItem(key, value);
   } catch {
@@ -80,23 +80,78 @@ const applyTheme = ({ storage, attributes }) => {
   }
   // O init script roda antes do <html> existir em alguns documentos: aplicar cedo sem quebrar, e de novo no DOMContentLoaded.
   const set = () => {
-    for (const [key, value] of Object.entries(attributes)) document.documentElement?.setAttribute(key, value);
+    const html = document.documentElement;
+    if (!html) return;
+    for (const [key, value] of Object.entries(attributes)) html.setAttribute(key, value);
+    html.classList.remove(...removeClass);
+    html.classList.add(...addClass);
   };
   set();
   document.addEventListener('DOMContentLoaded', set, { once: true });
 };
 
-const applyAttributes = (attributes) => {
-  for (const [key, value] of Object.entries(attributes)) document.documentElement.setAttribute(key, value);
+/** Reaplica depois que o app hidratou (alguns apps reescrevem o <html> ao iniciar). */
+const applyThemeDom = ({ attributes, addClass, removeClass }) => {
+  const html = document.documentElement;
+  for (const [key, value] of Object.entries(attributes)) html.setAttribute(key, value);
+  html.classList.remove(...removeClass);
+  html.classList.add(...addClass);
 };
 
-const login = async (browser, config, env, outDir) => {
+const themeArgs = (theme) => ({ storage: theme.localStorage, attributes: theme.attributes, addClass: theme.addClass ?? [], removeClass: theme.removeClass ?? [] });
+
+/** Preview protegido da Vercel: o segredo de automação libera o acesso sem login no painel. */
+const bypassHeaders = (env) =>
+  env.VERCEL_AUTOMATION_BYPASS_SECRET
+    ? { 'x-vercel-protection-bypass': env.VERCEL_AUTOMATION_BYPASS_SECRET, 'x-vercel-set-bypass-cookie': 'samesitenone' }
+    : null;
+
+const loginFailure = async (page, outDir, err) => {
+  // Evidência para diagnosticar sem repetir tentativas de login às cegas (a senha é mascarada pelo input).
+  const shot = join(outDir, 'login-failure.png');
+  const evidence = page
+    ? await Promise.all([page.screenshot({ path: shot, fullPage: true }).then(() => shot), Promise.resolve(new URL(page.url()).pathname)]).catch(() => [null, null])
+    : [null, null];
+  const detail = evidence[0] ? ` Página em ${evidence[1]}; screenshot: ${evidence[0]}.` : '';
+  return new UxAuditError(`Login do ux-audit falhou: ${firstLine(err)}.${detail}`);
+};
+
+/**
+ * Login sem configuração por projeto: credenciais em UX_AUDIT_EMAIL/UX_AUDIT_PASSWORD, formulário
+ * achado pelo campo de senha. Sem credenciais ou sem formulário, segue sem sessão.
+ */
+const autoLogin = async (browser, config, env, outDir, headers) => {
+  const email = env[AUTO_LOGIN_ENV.email];
+  const password = env[AUTO_LOGIN_ENV.password];
+  if (!email || !password) return { state: null, credentials: false };
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, ...(headers ? { extraHTTPHeaders: headers } : {}) });
+  let page = null;
+  try {
+    page = await context.newPage();
+    await page.goto(`${config.baseUrl}${config.routes[0].path}`, { waitUntil: 'networkidle', timeout: NAV_TIMEOUT });
+    const form = await page.evaluate(findLoginForm);
+    if (!form) return { state: null, credentials: true };
+    if (form.user) await page.fill('[data-ux-audit-login="user"]', email, { timeout: SELECTOR_TIMEOUT });
+    await page.fill('[data-ux-audit-login="password"]', password, { timeout: SELECTOR_TIMEOUT });
+    if (form.submit) await page.click('[data-ux-audit-login="submit"]', { timeout: SELECTOR_TIMEOUT });
+    else await page.press('[data-ux-audit-login="password"]', 'Enter', { timeout: SELECTOR_TIMEOUT });
+    await page.waitForFunction(passwordFieldGone, null, { timeout: NAV_TIMEOUT });
+    await page.waitForLoadState('networkidle', { timeout: NAV_TIMEOUT });
+    return { state: await context.storageState(), credentials: true };
+  } catch (err) {
+    throw await loginFailure(page, outDir, err);
+  } finally {
+    await context.close();
+  }
+};
+
+const login = async (browser, config, env, outDir, headers) => {
   const values = Object.entries(config.login.fields).map(([selector, envName]) => {
     const value = env[envName];
     if (!value) throw new UxAuditError(`Variável ${envName} não definida; ela é usada no login do ux-audit.`);
     return [selector, value];
   });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, ...(headers ? { extraHTTPHeaders: headers } : {}) });
   let page = null;
   try {
     page = await context.newPage();
@@ -108,13 +163,7 @@ const login = async (browser, config, env, outDir) => {
     return await context.storageState();
   } catch (err) {
     if (err instanceof UxAuditError) throw err;
-    // Evidência para diagnosticar sem repetir tentativas de login às cegas (os campos já foram preenchidos; a senha é mascarada pelo input).
-    const shot = join(outDir, 'login-failure.png');
-    const evidence = page
-      ? await Promise.all([page.screenshot({ path: shot, fullPage: true }).then(() => shot), Promise.resolve(new URL(page.url()).pathname)]).catch(() => [null, null])
-      : [null, null];
-    const detail = evidence[0] ? ` Página em ${evidence[1]}; screenshot: ${evidence[0]}.` : '';
-    throw new UxAuditError(`Login do ux-audit falhou: ${firstLine(err)}.${detail}`);
+    throw await loginFailure(page, outDir, err);
   } finally {
     await context.close();
   }
@@ -122,7 +171,7 @@ const login = async (browser, config, env, outDir) => {
 
 const slug = (text) => text.replace(/^\/+|\/+$/g, '').replace(/[^a-zA-Z0-9]+/g, '-') || 'root';
 
-const auditCombination = async ({ browser, config, route, theme, viewport, storageState, outDir }) => {
+const auditCombination = async ({ browser, config, route, theme, viewport, storageState, session, outDir, headers }) => {
   const context = await browser.newContext({
     viewport: { width: viewport.width, height: viewport.height },
     hasTouch: viewport.touch,
@@ -131,6 +180,7 @@ const auditCombination = async ({ browser, config, route, theme, viewport, stora
     reducedMotion: 'reduce',
     ...(theme.colorScheme ? { colorScheme: theme.colorScheme } : {}),
     ...(storageState ? { storageState } : {}),
+    ...(headers ? { extraHTTPHeaders: headers } : {}),
   });
   const pageErrors = [];
   const consoleErrors = [];
@@ -138,7 +188,7 @@ const auditCombination = async ({ browser, config, route, theme, viewport, stora
   let metrics = null;
   const file = `${slug(route.path)}__${slug(theme.name)}__${viewport.width}x${viewport.height}.png`;
   try {
-    await context.addInitScript(applyTheme, { storage: theme.localStorage, attributes: theme.attributes });
+    await context.addInitScript(applyTheme, themeArgs(theme));
     const page = await context.newPage();
     page.on('pageerror', (err) => pageErrors.push(firstLine(err)));
     page.on('console', (msg) => {
@@ -152,10 +202,10 @@ const auditCombination = async ({ browser, config, route, theme, viewport, stora
       navigation = { ok: false, reason: firstLine(err) };
     }
     const landed = new URL(page.url()).pathname;
-    if (navigation.ok && config.login && landed.startsWith(config.login.path) && !route.path.startsWith(config.login.path)) {
+    if (navigation.ok && config.login && !config.login.auto && landed.startsWith(config.login.path) && !route.path.startsWith(config.login.path)) {
       navigation = { ok: false, reason: `redirecionou para ${landed}; a sessão de login não foi aplicada` };
     }
-    await page.evaluate(applyAttributes, theme.attributes);
+    await page.evaluate(applyThemeDom, themeArgs(theme));
     metrics = await page.evaluate(collectPageMetrics, { maxTexts: 400 });
     await page.screenshot({ path: join(outDir, file), fullPage: true });
   } catch (err) {
@@ -167,7 +217,18 @@ const auditCombination = async ({ browser, config, route, theme, viewport, stora
     ...evaluateRuntime({ pageErrors, consoleErrors, navigation }),
     ...(metrics ? evaluateMetrics(metrics, viewport, config.thresholds) : []),
   ];
-  return { route: route.path, theme: theme.name, viewport, screenshot: metrics ? file : null, findings };
+  // Sem sessão, uma tela de login "aprovada" não diz nada sobre o app: avisar em vez de fingir cobertura.
+  if (metrics?.hasPasswordField && config.login?.auto && !session.loggedIn) {
+    findings.push({
+      ruleId: 'ux-login-required',
+      severity: 'medium',
+      description: session.credentials
+        ? 'A rota continua mostrando formulário de login: as telas autenticadas não foram auditadas.'
+        : `A rota mostra formulário de login e não há ${AUTO_LOGIN_ENV.email}/${AUTO_LOGIN_ENV.password} no ambiente: as telas autenticadas não foram auditadas.`,
+      selector: null,
+    });
+  }
+  return { route: route.path, theme: theme.name, viewport, screenshot: metrics ? file : null, canvas: metrics?.canvas ?? null, findings };
 };
 
 /**
@@ -221,12 +282,22 @@ export const runUxAudit = async ({ target, config, env = process.env, local = fa
   const within = guard(browser, client.version);
   const matrix = [];
   try {
-    const storageState = config.login ? await within(login(browser, config, env, outDir), 'O login') : null;
+    const headers = bypassHeaders(env);
+    let storageState = null;
+    let session = { loggedIn: false, credentials: false };
+    if (config.login?.auto) {
+      const result = await within(autoLogin(browser, config, env, outDir, headers), 'O login automático');
+      storageState = result.state;
+      session = { loggedIn: Boolean(result.state), credentials: result.credentials };
+    } else if (config.login) {
+      storageState = await within(login(browser, config, env, outDir, headers), 'O login');
+      session = { loggedIn: true, credentials: true };
+    }
     for (const route of config.routes) {
       for (const theme of config.themes) {
         for (const viewport of config.viewports) {
           const label = `A combinação ${route.path} · ${theme.name} · ${viewport.width}×${viewport.height}`;
-          matrix.push(await within(auditCombination({ browser, config, route, theme, viewport, storageState, outDir }), label));
+          matrix.push(await within(auditCombination({ browser, config, route, theme, viewport, storageState, session, outDir, headers }), label));
         }
       }
     }
@@ -243,7 +314,7 @@ export const runUxAudit = async ({ target, config, env = process.env, local = fa
     head: gitHead(targetDir),
     baseUrl: config.baseUrl,
     thresholds: config.thresholds,
-    matrix,
+    matrix: markThemesNotApplied(matrix),
     summary: summarize(matrix),
   };
   const reportPath = join(outDir, UX_REPORT_FILE);

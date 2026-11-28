@@ -137,6 +137,34 @@ export const evaluateRuntime = ({ pageErrors = [], consoleErrors = [], navigatio
   ...consoleErrors.slice(0, 5).map((e) => finding('ux-console-error', 'medium', `console.error: ${e}`)),
 ];
 
+/**
+ * Temas genéricos podem não pegar em apps com mecanismo próprio. Se todos os temas renderizam o
+ * mesmo fundo numa rota/viewport, a matriz de temas é ilusória: melhor dizer isso do que aprovar.
+ */
+export const markThemesNotApplied = (matrix) => {
+  const groups = new Map();
+  for (const m of matrix) {
+    if (!m.canvas) continue;
+    const key = `${m.route}|${m.viewport.width}x${m.viewport.height}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(m);
+  }
+  for (const entries of groups.values()) {
+    const themes = [...new Set(entries.map((e) => e.theme))];
+    if (themes.length < 2 || new Set(entries.map((e) => e.canvas)).size !== 1) continue;
+    for (const e of entries) {
+      e.findings.push(
+        finding(
+          'ux-theme-not-applied',
+          'medium',
+          `Os temas ${themes.join(', ')} renderizaram o mesmo fundo (${e.canvas}): o app não aplicou o tema por esse mecanismo. Configure ux.themes no projeto ou confirme que ele tem um tema só.`
+        )
+      );
+    }
+  }
+  return matrix;
+};
+
 export const summarize = (matrix) => {
   const all = matrix.flatMap((m) => m.findings);
   const hard = all.filter((f) => f.severity === 'hard').length;

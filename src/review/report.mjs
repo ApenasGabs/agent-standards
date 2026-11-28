@@ -31,7 +31,7 @@ const formatDivergence = (d) =>
 
 const uxAuditLine = (a = { state: 'disabled' }) =>
   a.state === 'ok'
-    ? `Auditoria renderizada: \`${a.report}\` — ${a.summary?.combinations ?? 0} combinação(ões), 🔴 ${a.summary?.hard ?? 0} · 🟡 ${a.summary?.medium ?? 0}. Screenshots em \`${a.report.replace(/[^/]+$/, '')}\`.`
+    ? `Auditoria renderizada${a.url ? ` de ${a.url}` : ''}: \`${a.report}\` — ${a.summary?.combinations ?? 0} combinação(ões), 🔴 ${a.summary?.hard ?? 0} · 🟡 ${a.summary?.medium ?? 0}. Screenshots em \`${a.report.replace(/[^/]+$/, '')}\`.`
     : UX_AUDIT_LABELS[a.state];
 
 export const renderReport = (r) => {
