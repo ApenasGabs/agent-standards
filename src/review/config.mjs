@@ -1,3 +1,8 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { isAbsolute, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import process from 'node:process';
+
 /** Regras que o revisor verifica de fato, com os valores aceitos. */
 export const SUPPORTED_RULES = {
   functions: ['arrow-only', 'any'],
@@ -66,7 +71,8 @@ export const parseConfig = (text) => {
         .map(([k]) => k)
     ),
   ];
-  if (config.ux !== undefined && !isPlainObject(config.ux)) throw new ConfigError('ux deve ser um objeto.');
+  // `"ux": false` desliga o gate de auditoria renderizada mesmo quando o perfil o liga.
+  if (config.ux !== undefined && config.ux !== false && !isPlainObject(config.ux)) throw new ConfigError('ux deve ser um objeto (ou false).');
   return { source: 'agent.config.json', rules, overrides, unverified, ux: config.ux ?? null };
 };
 
@@ -110,5 +116,38 @@ export const configFromDocs = (docs) => {
     overrides: [],
     unverified: [],
     ux: null,
+    deduced: true,
+  };
+};
+
+const PROFILES_DIR = fileURLToPath(new URL('../../profiles/', import.meta.url));
+
+/**
+ * Carrega um perfil global: nome de um arquivo em `profiles/` deste pacote ou caminho para um JSON.
+ * Perfis são a fonte única das regras gerais; o projeto só declara exceções.
+ */
+export const loadProfile = (nameOrPath, cwd = process.cwd()) => {
+  if (!nameOrPath) return null;
+  const byName = /^[\w-]+$/.test(nameOrPath) ? resolve(PROFILES_DIR, `${nameOrPath}.json`) : null;
+  const path = byName && existsSync(byName) ? byName : isAbsolute(nameOrPath) ? nameOrPath : resolve(cwd, nameOrPath);
+  if (!existsSync(path)) throw new ConfigError(`Perfil "${nameOrPath}" não encontrado (procurado em profiles/ e em ${path}).`);
+  const parsed = parseConfig(readFileSync(path, 'utf-8'));
+  if (parsed.unverified.length > 0) throw new ConfigError(`Perfil "${nameOrPath}" declara regras que o revisor não verifica: ${parsed.unverified.join(', ')}.`);
+  const name = JSON.parse(readFileSync(path, 'utf-8')).name ?? nameOrPath;
+  return { name, rules: parsed.rules, overrides: parsed.overrides, ux: parsed.ux };
+};
+
+/** Perfil por baixo, configuração do projeto (ou deduzida da documentação) por cima. */
+export const applyProfile = (config, profile) => {
+  if (!profile) return config;
+  // Deduzir "false" da documentação é falta de evidência, não opt-out: só o agent.config.json desliga regra do perfil.
+  const own = config.deduced ? Object.fromEntries(Object.entries(config.rules).filter(([, v]) => v !== false && v !== 'any')) : config.rules;
+  const ux = config.ux === false ? null : profile.ux || config.ux ? { ...(profile.ux || {}), ...(config.ux || {}) } : null;
+  return {
+    ...config,
+    source: `perfil ${profile.name} + ${config.source}`,
+    rules: { ...profile.rules, ...own },
+    overrides: [...profile.overrides, ...config.overrides],
+    ux,
   };
 };
