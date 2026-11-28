@@ -37,7 +37,7 @@ export const syncAgentDocs = (targetDir, customConfig = null, { force = false, o
   const buildMarkdownRules = (agentName) => {
     let md = `# Diretrizes de Engenharia e Padrões de Código (${agentName})\n\n`;
     md += `> Gerado automaticamente por \`@apenasgabs/agent-standards\` a partir de \`agent.config.json\`.\n`;
-    md += `> Preset Ativo: **${config.preset || 'custom'}** | Linguagem: **${lang.toUpperCase()}**\n\n`;
+    md += `> Preset Ativo: **${config.preset || config.name || 'custom'}** | Linguagem: **${lang.toUpperCase()}**\n\n`;
 
     // ==========================================
     // REGRAS PARA JAVA (SPRING BOOT)
@@ -55,7 +55,11 @@ export const syncAgentDocs = (targetDir, customConfig = null, { force = false, o
       md += `## 3. Logs, Exceções e Higiene\n`;
       md += `- ❌ **PROIBIDO** o uso de \`System.out.println\` ou \`e.printStackTrace()\` em código de produção.\n`;
       md += `- ✅ Utilizar logging estruturado via SLF4J / Logback (\`@Slf4j\` ou \`LoggerFactory.getLogger\`).\n`;
-      md += `- ✅ Retornos opcionais de repositório devem usar \`java.util.Optional.map(...).orElseThrow(...)\`.\n\n`;
+      md += `- ✅ Retornos opcionais de repositório devem usar \`java.util.Optional.map(...).orElseThrow(...)\`.\n`;
+      if (rules.security?.blockHardcodedSecrets !== false) {
+        md += `- ❌ **Credenciais Proibidas**: Nunca commitar API keys, senhas ou tokens hardcoded.\n`;
+      }
+      md += `\n`;
 
       md += `## 4. Testes Automatizados\n`;
       md += `- ✅ Testes unitários e de integração com **JUnit 5** (\`@Test\`, \`@SpringBootTest\`, Mockito).\n`;
@@ -83,6 +87,9 @@ export const syncAgentDocs = (targetDir, customConfig = null, { force = false, o
       md += `## 4. Logging & Padrões de Nomenclatura\n`;
       md += `- ❌ Proibido \`fmt.Println()\` como log de produção. Utilizar logger estruturado (\`logrus\` ou \`slog\`).\n`;
       md += `- ✅ Identificadores exportados em PascalCase; identificadores internos do pacote em camelCase.\n`;
+      if (rules.security?.blockHardcodedSecrets !== false) {
+        md += `- ❌ **Credenciais Proibidas**: Nunca commitar API keys, senhas ou tokens hardcoded.\n`;
+      }
       return md;
     }
 

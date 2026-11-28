@@ -118,6 +118,8 @@ O motor vem com presets de referência baseados em arquiteturas consagradas:
 |---|---|---|
 | **`frontend-react`** | React 19 / Next.js / Vite | Arrow functions obrigatórias, proibição de `any`, `data-testid` em botões/inputs, daisyUI/Tailwind prioritário, bloqueio de XSS. |
 | **`scraping-crawler`** | SimpleCrawl / Playwright / Cheerio | Estratégia **HTTP-first, browser-fallback** (Cheerio para SSR, Playwright para CSR), arquitetura modular `BaseScraper` com separação de seletores e mappers. |
+| **`java-spring`** | Java 17+ / Maven / Gradle / Spring Boot | Arquitetura em camadas (`Controller ➔ Service ➔ Repository ➔ Model`), DTOs em Records, Bean Validation, SLF4J sem `System.out`, JUnit 5. |
+| **`go-service`** | Go Modules / Gin / Fiber / Echo / CLI | Erros idiomáticos (`if err != nil`, `%w`), `context.Context` como 1º parâmetro, `signal.NotifyContext`, `sync.WaitGroup`, logger estruturado (`logrus`/`slog`). |
 | **`minimal`** | Qualquer stack / Universal | Higiene de código, remoção de `console.log` residual, tratamento adequado de `catch` e bloqueio de credenciais hardcoded. |
 
 ---
